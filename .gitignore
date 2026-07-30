@@ -1,0 +1,27 @@
+# Design prototype, not part of the build
+prototype/
+
+# Build output. The dashboard is built by the Dockerfile or `make dashboard`,
+# never committed, so a stale build cannot ship by accident. The .gitkeep is
+# what lets go:embed compile before the dashboard has been built.
+/quecto
+/dist/
+dashboard/dist/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+
+# Node
+node_modules/
+.astro/
+
+# Local database
+*.db
+*.db-wal
+*.db-shm
+
+# Env
+.env
+.env.local
+
+# macOS
+.DS_Store

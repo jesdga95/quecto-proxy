@@ -1,0 +1,15 @@
+---
+interface Props {
+  label: string;
+  for: string;
+  hint?: string;
+  class?: string;
+}
+const { label, for: htmlFor, hint, class: cls = "" } = Astro.props;
+---
+
+<div class:list={["flex flex-col gap-1.5", cls]}>
+  <label for={htmlFor} class="text-[12.5px] font-[550] text-ink-2">{label}</label>
+  <slot />
+  {hint && <span class="text-[11.5px] text-muted">{hint}</span>}
+</div>

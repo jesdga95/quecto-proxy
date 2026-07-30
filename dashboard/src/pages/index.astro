@@ -1,0 +1,214 @@
+---
+import Dashboard from "../layouts/Dashboard.astro";
+import StatTile from "../components/molecules/StatTile.astro";
+---
+
+<Dashboard title="Overview" current="overview">
+  <div class="mb-[22px] flex items-start justify-between gap-6">
+    <div>
+      <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">Overview</h1>
+      <p id="page-sub" class="text-[13px] text-muted">Last 24 hours.</p>
+    </div>
+    <div class="flex gap-2">
+      <select id="range" class="select w-auto">
+        <option value="24h" selected>Last 24 hours</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+      </select>
+      <button id="theme-toggle" class="btn btn-ghost btn-sm">Toggle theme</button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-3">
+    <StatTile label="Requests" id="stat-requests" footId="stat-requests-foot" />
+    <StatTile label="Tokens" id="stat-tokens" footId="stat-tokens-foot" />
+    <StatTile label="p95 TTFT" id="stat-ttft" foot="upstream, not proxy" />
+    <StatTile label="Errors" id="stat-errors" footId="stat-errors-foot" />
+    <StatTile
+      label="Proxy overhead"
+      id="stat-overhead"
+      foot="p99 added latency"
+      accent
+    />
+  </div>
+
+  <section class="mt-[30px]">
+    <div class="card px-[18px] pt-4 pb-3">
+      <div class="mb-3.5 flex items-baseline justify-between">
+        <span class="text-[13px] font-[550]">Requests over time</span>
+        <span id="chart-peak" class="num text-[11.5px] text-muted"></span>
+      </div>
+      <div id="chart" class="h-32"></div>
+      <div
+        id="chart-axis"
+        class="mt-[7px] flex justify-between font-mono text-[10.5px] text-muted"
+      >
+      </div>
+    </div>
+  </section>
+
+  <section class="mt-[30px]">
+    <h2 class="label mb-2.5">Busiest keys</h2>
+    <div class="card overflow-x-auto">
+      <table>
+        <thead>
+          <tr>
+            <th>Key</th>
+            <th>Model</th>
+            <th class="right">Requests</th>
+            <th class="right">Tokens</th>
+          </tr>
+        </thead>
+        <tbody id="top-keys"></tbody>
+      </table>
+      <div id="top-keys-empty" hidden class="px-6 py-10 text-center text-[12.5px] text-muted">
+        No traffic in this period yet.
+      </div>
+    </div>
+  </section>
+</Dashboard>
+
+<script>
+  import { api, type Bucket } from "../lib/api";
+  import { count, tokens, millis, esc, tokensFlat } from "../lib/format";
+
+  const el = (id: string) => document.getElementById(id)!;
+
+  function setTile(id: string, value: string, unit = "") {
+    el(id).innerHTML =
+      esc(value) + (unit ? `<span class="text-sm text-muted">${unit}</span>` : "");
+  }
+
+  const HOUR = 3600;
+
+  /** The API returns only populated buckets, so gaps are filled here. Without
+      this a single busy hour would stretch across the whole chart. */
+  function fillSeries(from: number, to: number, series: Bucket[]): Bucket[] {
+    const step = to - from > 48 * HOUR ? 24 * HOUR : HOUR;
+    const start = Math.floor(from / step) * step;
+    const end = Math.floor(to / step) * step;
+
+    const byBucket = new Map<number, Bucket>();
+    for (const b of series) {
+      const at = Math.floor(b.bucket / step) * step;
+      const cur = byBucket.get(at) ?? { bucket: at, requests: 0, errors: 0, tokens: 0 };
+      cur.requests += b.requests;
+      cur.errors += b.errors;
+      cur.tokens += b.tokens;
+      byBucket.set(at, cur);
+    }
+
+    const out: Bucket[] = [];
+    for (let at = start; at <= end; at += step) {
+      out.push(byBucket.get(at) ?? { bucket: at, requests: 0, errors: 0, tokens: 0 });
+    }
+    return out;
+  }
+
+  /** Bars are drawn from the data rather than hand authored. */
+  function renderChart(series: Bucket[], daily: boolean) {
+    if (series.length === 0) {
+      el("chart").innerHTML = "";
+      el("chart-axis").innerHTML = "";
+      return;
+    }
+    const W = 720;
+    const H = 128;
+    const gap = series.length > 60 ? 1 : 3;
+    const bw = (W - gap * (series.length - 1)) / series.length;
+    const max = Math.max(...series.map((b) => b.requests), 1);
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="block h-32 w-full" role="img" aria-label="Requests over time">`;
+    for (const g of [0.25, 0.5, 0.75]) {
+      svg += `<line x1="0" y1="${(H * g).toFixed(1)}" x2="${W}" y2="${(H * g).toFixed(1)}" stroke="var(--border)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+    }
+    series.forEach((b, i) => {
+      const h = Math.max(2, (b.requests / max) * (H - 6));
+      const last = i === series.length - 1;
+      const fill = b.errors > 0 && b.errors / b.requests > 0.1
+        ? "var(--crit)"
+        : last
+          ? "var(--accent)"
+          : "var(--border-2)";
+      svg += `<rect x="${(i * (bw + gap)).toFixed(2)}" y="${(H - h).toFixed(2)}" width="${bw.toFixed(2)}" height="${h.toFixed(2)}" rx="1.5" fill="${fill}"/>`;
+    });
+    el("chart").innerHTML = svg + "</svg>";
+
+    const peak = series.reduce((a, b) => (b.requests > a.requests ? b : a));
+    el("chart-peak").textContent =
+      peak.requests === 0 ? "" : `peak ${count(peak.requests)}`;
+
+    const fmt = (u: number) =>
+      new Date(u * 1000).toLocaleString("en-GB", {
+        day: "numeric",
+        month: "short",
+        ...(daily ? {} : { hour: "2-digit", minute: "2-digit" }),
+      });
+    const mid = series[Math.floor(series.length / 2)]!;
+    el("chart-axis").innerHTML =
+      `<span>${esc(fmt(series[0]!.bucket))}</span>` +
+      `<span>${esc(fmt(mid.bucket))}</span>` +
+      `<span>${esc(fmt(series[series.length - 1]!.bucket))}</span>`;
+  }
+
+  async function load() {
+    const range = (el("range") as HTMLSelectElement).value;
+    const [stats, health] = await Promise.all([api.stats(range), api.health()]);
+
+    const t = stats.totals;
+    setTile("stat-requests", count(t.requests));
+    el("stat-requests-foot").textContent =
+      t.requests === 0 ? "No requests yet" : `across ${health.key_count} keys`;
+
+    const total = t.prompt_tokens + t.completion_tokens;
+    const tok = tokens(total);
+    setTile("stat-tokens", tok.value, tok.unit);
+    el("stat-tokens-foot").textContent =
+      `${tokensFlat(t.prompt_tokens)} in, ${tokensFlat(t.completion_tokens)} out`;
+
+    setTile("stat-ttft", stats.ttft_p95_ms === null ? "0" : millis(stats.ttft_p95_ms));
+
+    const rate = t.requests === 0 ? 0 : (t.errors / t.requests) * 100;
+    setTile("stat-errors", rate.toFixed(1), "%");
+    el("stat-errors-foot").textContent = `${count(t.errors)} of ${count(t.requests)}`;
+
+    setTile("stat-overhead", health.proxy_overhead_p99_ms.toFixed(2), "ms");
+
+    const daily = stats.to - stats.from > 48 * HOUR;
+    renderChart(fillSeries(stats.from, stats.to, stats.series ?? []), daily);
+
+    const top = stats.top_keys ?? [];
+    const body = el("top-keys");
+    el("top-keys-empty").hidden = top.length > 0;
+    body.innerHTML = top
+      .map(
+        (k) => `<tr>
+          <td class="font-[550]">${esc(k.key_name || "Deleted key")}</td>
+          <td>${k.model ? `<span class="mono-chip">${esc(k.model)}</span>` : ""}</td>
+          <td class="right num">${count(k.requests)}</td>
+          <td class="right num">${tokensFlat(k.tokens)}</td>
+        </tr>`,
+      )
+      .join("");
+  }
+
+  el("range").addEventListener("change", () => {
+    const label = (el("range") as HTMLSelectElement).selectedOptions[0]!.text;
+    el("page-sub").textContent = label + ".";
+    load();
+  });
+
+  el("theme-toggle").addEventListener("click", () => {
+    const root = document.documentElement;
+    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+    const now = root.getAttribute("data-theme") ?? (dark ? "dark" : "light");
+    root.setAttribute("data-theme", now === "dark" ? "light" : "dark");
+    localStorage.setItem("quecto-theme", now === "dark" ? "light" : "dark");
+  });
+
+  const saved = localStorage.getItem("quecto-theme");
+  if (saved) document.documentElement.setAttribute("data-theme", saved);
+
+  load();
+  setInterval(load, 30_000);
+</script>

@@ -1,0 +1,242 @@
+---
+import Dashboard from "../layouts/Dashboard.astro";
+import Button from "../components/atoms/Button.astro";
+import FormField from "../components/molecules/FormField.astro";
+---
+
+<Dashboard title="Settings" current="settings">
+  <form id="settings-form">
+    <div class="mb-[22px] flex items-start justify-between gap-6">
+      <div>
+        <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">Settings</h1>
+        <p class="text-[13px] text-muted">
+          Seeded from the environment at startup, editable here while running.
+        </p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="save-note" class="text-[12.5px] text-muted"></span>
+        <Button type="submit" id="save">Save changes</Button>
+      </div>
+    </div>
+
+    <div class="card p-[18px]">
+      <h2 class="label mb-2.5">Upstream</h2>
+      <div class="grid grid-cols-2 gap-x-5 gap-y-4 max-md:grid-cols-1">
+        <FormField
+          label="Server URL"
+          for="s-url"
+          hint="Where Quecto forwards every request under /v1."
+          class="col-span-full"
+        >
+          <input class="input" id="s-url" />
+        </FormField>
+
+        <FormField
+          label="Upstream credential"
+          for="s-key"
+          hint="Sent to the model server in place of the caller's key. Leave the mask to keep it."
+        >
+          <input class="input" id="s-key" type="password" />
+        </FormField>
+
+        <FormField
+          label="Default max tokens"
+          for="s-maxtok"
+          hint="Reserved against the token limit when a request does not say."
+        >
+          <input class="input num" id="s-maxtok" inputmode="numeric" />
+        </FormField>
+      </div>
+    </div>
+
+    <div class="card mt-[30px] p-[18px]">
+      <h2 class="label mb-2.5">Logs</h2>
+      <div class="grid grid-cols-2 gap-x-5 gap-y-4 max-md:grid-cols-1">
+        <FormField
+          label="Keep logs for"
+          for="s-retention"
+          hint="Hourly totals are kept far longer, so charts stay long range."
+        >
+          <select class="select" id="s-retention">
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </FormField>
+
+        <FormField
+          label="Maximum rows"
+          for="s-rows"
+          hint="Hard ceiling. Oldest rows are dropped first."
+        >
+          <input class="input num" id="s-rows" inputmode="numeric" />
+        </FormField>
+      </div>
+    </div>
+
+    <div class="card mt-[30px] p-[18px]">
+      <h2 class="label mb-2.5">Access</h2>
+      <div class="grid grid-cols-2 gap-x-5 gap-y-4 max-md:grid-cols-1">
+        <FormField
+          label="New admin password"
+          for="s-pw"
+          hint="At least 10 characters. Signs out every other session."
+        >
+          <input class="input" id="s-pw" type="password" autocomplete="new-password" />
+        </FormField>
+      </div>
+    </div>
+
+    <p id="settings-error" hidden class="mt-4 text-[12.5px] text-crit"></p>
+  </form>
+
+  <section class="mt-[30px]">
+    <div class="card p-[18px]">
+      <h2 class="label mb-1">Health</h2>
+      <div id="health" class="flex flex-col"></div>
+    </div>
+  </section>
+
+  <section class="mt-[30px]">
+    <div class="card p-[18px]">
+      <h2 class="label mb-2.5">Set at startup</h2>
+      <p class="mb-3 text-[12.5px] text-muted">
+        These come from environment variables and need a restart to change.
+      </p>
+      <div id="fixed" class="flex flex-col"></div>
+    </div>
+  </section>
+</Dashboard>
+
+<script>
+  import { api } from "../lib/api";
+  import { bytes, count, esc } from "../lib/format";
+
+  const el = (id: string) => document.getElementById(id)!;
+  const MASK = "********";
+
+  function healthRow(name: string, sub: string, value: string): string {
+    return `<div class="flex items-center justify-between gap-4 border-b border-line py-2.5 last:border-b-0">
+      <div class="text-[13px]">
+        ${esc(name)}
+        <span class="block text-[11.5px] text-muted">${esc(sub)}</span>
+      </div>
+      ${value}
+    </div>`;
+  }
+
+  async function loadSettings() {
+    const s = await api.settings();
+    (el("s-url") as HTMLInputElement).value = s.upstream_url;
+    (el("s-key") as HTMLInputElement).value = s.upstream_api_key;
+    (el("s-maxtok") as HTMLInputElement).value = String(s.default_max_tokens);
+    (el("s-rows") as HTMLInputElement).value = String(s.log_max_rows);
+
+    const retention = el("s-retention") as HTMLSelectElement;
+    if (![...retention.options].some((o) => o.value === String(s.log_retention_days))) {
+      const opt = document.createElement("option");
+      opt.value = String(s.log_retention_days);
+      opt.textContent = `${s.log_retention_days} days`;
+      retention.append(opt);
+    }
+    retention.value = String(s.log_retention_days);
+
+    el("fixed").innerHTML = [
+      healthRow("Listen address", "QUECTO_LISTEN", `<span class="mono-chip">${esc(s.listen)}</span>`),
+      healthRow("Database", "QUECTO_DB_PATH", `<span class="mono-chip">${esc(s.db_path)}</span>`),
+      healthRow(
+        "Response header timeout",
+        "How long to wait for the first byte from the model server",
+        `<span class="mono-chip">${esc(s.upstream_header_timeout)}</span>`,
+      ),
+      healthRow(
+        "Trust forwarded headers",
+        "Only enable when Quecto sits behind a reverse proxy you control",
+        `<span class="pill pill-mute">${s.trust_proxy_headers ? "Yes" : "No"}</span>`,
+      ),
+    ].join("");
+  }
+
+  async function loadHealth() {
+    const h = await api.health();
+    const usage = !h.usage_reporting_known
+      ? `<span class="pill pill-mute">Not yet known</span>`
+      : h.usage_reporting_supported
+        ? `<span class="pill pill-ok">Supported</span>`
+        : `<span class="pill pill-warn">Not supported</span>`;
+
+    el("health").innerHTML = [
+      healthRow(
+        "Upstream reachable",
+        h.upstream_ok ? "Answered the last check" : (h.upstream_error ?? "Did not answer"),
+        h.upstream_ok
+          ? `<span class="pill pill-ok">Healthy</span>`
+          : `<span class="pill pill-crit">Unreachable</span>`,
+      ),
+      healthRow(
+        "Token reporting",
+        h.usage_reporting_supported
+          ? "The model server returns usage on streamed replies"
+          : "Token limits cannot be enforced on streamed replies",
+        usage,
+      ),
+      healthRow(
+        "Dropped log records",
+        "Records discarded because the write buffer filled",
+        `<span class="pill ${h.logs_dropped > 0 ? "pill-warn" : "pill-mute"} num">${count(h.logs_dropped)}</span>`,
+      ),
+      healthRow(
+        "Database size",
+        `${count(h.log_rows)} log rows`,
+        `<span class="pill pill-mute num">${esc(bytes(h.database_bytes))}</span>`,
+      ),
+      healthRow(
+        "Proxy overhead",
+        "p99 time spent authenticating and rate limiting",
+        `<span class="pill pill-mute num">${h.proxy_overhead_p99_ms.toFixed(2)} ms</span>`,
+      ),
+    ].join("");
+  }
+
+  function numberValue(id: string): number {
+    return Number((el(id) as HTMLInputElement).value.replace(/[,_\s]/g, ""));
+  }
+
+  el("settings-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = el("save") as HTMLButtonElement;
+    const err = el("settings-error");
+    const note = el("save-note");
+    err.hidden = true;
+    btn.disabled = true;
+
+    const body: Record<string, unknown> = {
+      upstream_url: (el("s-url") as HTMLInputElement).value,
+      default_max_tokens: numberValue("s-maxtok"),
+      log_retention_days: Number((el("s-retention") as HTMLSelectElement).value),
+      log_max_rows: numberValue("s-rows"),
+    };
+
+    const credential = (el("s-key") as HTMLInputElement).value;
+    if (credential !== MASK) body.upstream_api_key = credential;
+
+    const password = (el("s-pw") as HTMLInputElement).value;
+    if (password) body.new_password = password;
+
+    try {
+      await api.updateSettings(body);
+      (el("s-pw") as HTMLInputElement).value = "";
+      note.textContent = "Saved";
+      setTimeout(() => (note.textContent = ""), 2400);
+      await Promise.all([loadSettings(), loadHealth()]);
+    } catch (e) {
+      err.textContent = e instanceof Error ? e.message : "Could not save.";
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  loadSettings();
+  loadHealth();
+</script>

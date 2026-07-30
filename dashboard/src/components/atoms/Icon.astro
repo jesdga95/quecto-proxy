@@ -1,0 +1,27 @@
+---
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+interface Props {
+  name: string;
+  weight?: "regular" | "bold" | "fill" | "light";
+  class?: string;
+}
+
+const { name, weight = "regular", class: cls = "" } = Astro.props;
+
+const file = fileURLToPath(
+  new URL(
+    `../../../node_modules/@phosphor-icons/core/assets/${weight}/${name}.svg`,
+    import.meta.url,
+  ),
+);
+
+// Inlined at build time so no icon font or network request is needed.
+const svg = readFileSync(file, "utf8").replace(
+  "<svg ",
+  `<svg class="${cls}" aria-hidden="true" focusable="false" `,
+);
+---
+
+<Fragment set:html={svg} />

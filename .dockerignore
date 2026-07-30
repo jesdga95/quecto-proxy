@@ -1,0 +1,10 @@
+.git
+.gitignore
+prototype
+dashboard/node_modules
+dashboard/.astro
+internal/web/dist
+*.db
+*.db-wal
+*.db-shm
+README.md

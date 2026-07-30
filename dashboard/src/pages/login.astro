@@ -1,0 +1,64 @@
+---
+import Auth from "../layouts/Auth.astro";
+import Button from "../components/atoms/Button.astro";
+import FormField from "../components/molecules/FormField.astro";
+---
+
+<Auth title="Sign in">
+  <form id="login-form" class="flex w-full max-w-[336px] flex-col gap-[18px]">
+    <div class="flex flex-col items-center gap-0.5 text-center">
+      <span class="font-mono text-[19px] font-semibold tracking-[0.08em]">QUECTO</span>
+      <span class="font-mono text-[10px] tracking-[0.04em] text-muted">10⁻³⁰ · proxy</span>
+    </div>
+
+    <div class="card p-[18px]">
+      <FormField label="Admin password" for="password" class="mb-3.5">
+        <input
+          class="input"
+          id="password"
+          name="password"
+          type="password"
+          autocomplete="current-password"
+          required
+        />
+      </FormField>
+
+      <p id="login-error" hidden class="mb-3 text-[12.5px] text-crit"></p>
+
+      <Button type="submit" id="login-submit" class="w-full justify-center">
+        Sign in
+      </Button>
+    </div>
+  </form>
+</Auth>
+
+<script>
+  import { api } from "../lib/api";
+
+  const form = document.getElementById("login-form") as HTMLFormElement;
+  const input = document.getElementById("password") as HTMLInputElement;
+  const submit = document.getElementById("login-submit") as HTMLButtonElement;
+  const error = document.getElementById("login-error") as HTMLParagraphElement;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    error.hidden = true;
+    submit.disabled = true;
+    submit.textContent = "Signing in";
+
+    try {
+      await api.login(input.value);
+      window.location.href = "/admin/";
+    } catch (err) {
+      error.textContent =
+        err instanceof Error ? err.message : "Could not sign in.";
+      error.hidden = false;
+      input.select();
+    } finally {
+      submit.disabled = false;
+      submit.textContent = "Sign in";
+    }
+  });
+
+  input.focus();
+</script>

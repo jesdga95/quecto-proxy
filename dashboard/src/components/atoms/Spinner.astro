@@ -1,0 +1,10 @@
+---
+interface Props { class?: string }
+const { class: cls = "" } = Astro.props;
+---
+
+<span
+  class:list={["inline-block size-3.5 rounded-full border-2 border-line-strong border-t-accent animate-spin", cls]}
+  role="status"
+  aria-label="Loading"
+></span>

@@ -1,0 +1,19 @@
+services:
+  quecto:
+    build: .
+    ports:
+      - "11312:11312"
+    volumes:
+      - quecto-data:/data
+    environment:
+      # Point this at your OpenAI compatible server.
+      # llama.cpp and LocalAI default to 8080, vLLM to 8000.
+      QUECTO_UPSTREAM_URL: http://host.docker.internal:8080/v1
+      # Only used on first start, to create the admin password.
+      QUECTO_ADMIN_PASSWORD: ${QUECTO_ADMIN_PASSWORD:?set QUECTO_ADMIN_PASSWORD}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  quecto-data:

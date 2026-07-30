@@ -1,0 +1,27 @@
+# Build the dashboard first so it can be embedded into the binary.
+FROM node:22-alpine AS dashboard
+WORKDIR /src/dashboard
+COPY dashboard/package.json dashboard/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY dashboard/ ./
+RUN npm run build
+
+FROM golang:1.26-alpine AS build
+RUN apk add --no-cache ca-certificates
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ ./cmd/
+COPY internal/ ./internal/
+COPY --from=dashboard /src/internal/web/dist ./internal/web/dist
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /quecto ./cmd/quecto
+
+FROM scratch
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /quecto /quecto
+
+ENV QUECTO_LISTEN=:11312 \
+    QUECTO_DB_PATH=/data/quecto.db
+EXPOSE 11312
+VOLUME ["/data"]
+ENTRYPOINT ["/quecto"]

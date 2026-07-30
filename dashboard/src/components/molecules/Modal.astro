@@ -1,0 +1,19 @@
+---
+interface Props { id: string; labelledBy: string }
+const { id, labelledBy } = Astro.props;
+---
+
+<div
+  id={id}
+  hidden
+  class="fixed inset-0 z-50 grid place-items-center bg-black/40 p-6"
+>
+  <div
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby={labelledBy}
+    class="w-full max-w-[452px] rounded-[11px] border border-line bg-bg shadow-[0_16px_48px_-12px_rgba(0,0,0,0.28)]"
+  >
+    <slot />
+  </div>
+</div>

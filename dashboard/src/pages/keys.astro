@@ -1,0 +1,309 @@
+---
+import Dashboard from "../layouts/Dashboard.astro";
+import Button from "../components/atoms/Button.astro";
+import Icon from "../components/atoms/Icon.astro";
+import Modal from "../components/molecules/Modal.astro";
+import FormField from "../components/molecules/FormField.astro";
+---
+
+<Dashboard title="API keys" current="keys">
+  <div class="mb-[22px] flex items-start justify-between gap-6">
+    <div>
+      <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">API keys</h1>
+      <p class="text-[13px] text-muted">
+        Each key carries its own expiration and rate limits.
+      </p>
+    </div>
+    <Button id="open-create"><Icon name="plus" class="size-[15px]" />Create key</Button>
+  </div>
+
+  <div class="card overflow-x-auto">
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Key</th>
+          <th>Limits</th>
+          <th>Expires</th>
+          <th>Last used</th>
+          <th>Status</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="key-rows"></tbody>
+    </table>
+    <div id="keys-empty" hidden class="px-6 py-14 text-center">
+      <p class="text-[13px] font-[550] text-ink-2">No keys yet</p>
+      <p class="mt-1 text-[12.5px] text-muted">
+        Create one to start sending traffic through Quecto.
+      </p>
+    </div>
+  </div>
+</Dashboard>
+
+<Modal id="create-modal" labelledBy="create-title">
+  <div id="step-form">
+    <div class="flex items-start justify-between gap-4 px-[18px] pt-[17px]">
+      <div>
+        <h2 id="create-title" class="text-[15px] font-semibold">Create API key</h2>
+        <p class="mt-[3px] text-[12.5px] text-muted">
+          You will see the key once, right after it is created.
+        </p>
+      </div>
+      <button class="icon-btn" data-close aria-label="Close">
+        <Icon name="x" class="size-[15px]" />
+      </button>
+    </div>
+
+    <div class="flex flex-col gap-3.5 p-[18px]">
+      <FormField label="Name" for="k-name">
+        <input class="input" id="k-name" placeholder="Laptop, n8n, phone" />
+      </FormField>
+
+      <FormField label="Expires" for="k-exp">
+        <select class="select" id="k-exp">
+          <option value="0">Never</option>
+          <option value="7">In 7 days</option>
+          <option value="30" selected>In 30 days</option>
+          <option value="90">In 90 days</option>
+          <option value="365">In a year</option>
+        </select>
+      </FormField>
+
+      <div class="grid grid-cols-2 gap-3">
+        <FormField label="Requests per minute" for="k-rpm">
+          <input class="input num" id="k-rpm" inputmode="numeric" value="60" />
+        </FormField>
+        <FormField label="Tokens per minute" for="k-tpm">
+          <input class="input num" id="k-tpm" inputmode="numeric" value="120000" />
+        </FormField>
+      </div>
+
+      <span class="text-[11.5px] text-muted">Leave a limit empty for no limit.</span>
+      <p id="create-error" hidden class="text-[12.5px] text-crit"></p>
+    </div>
+
+    <div
+      class="flex justify-end gap-2 rounded-b-[11px] border-t border-line bg-surface px-[18px] py-3"
+    >
+      <Button variant="ghost" data-close>Cancel</Button>
+      <Button id="do-create">Create key</Button>
+    </div>
+  </div>
+
+  <div id="step-done" hidden>
+    <div class="px-[18px] pt-[17px]">
+      <h2 class="text-[15px] font-semibold">Key created</h2>
+      <p class="mt-[3px] text-[12.5px] text-muted">
+        Copy it now. Quecto stores only a hash.
+      </p>
+    </div>
+
+    <div class="flex flex-col gap-3.5 p-[18px]">
+      <div
+        class="flex items-center gap-2.5 rounded-md border border-line-strong bg-surface-2 px-3 py-2.5"
+      >
+        <code id="new-key" class="flex-1 font-mono text-[12.5px] break-all"></code>
+        <Button variant="ghost" size="sm" id="copy-key">
+          <Icon name="copy" class="size-[15px]" /><span>Copy</span>
+        </Button>
+      </div>
+
+      <div
+        class="flex gap-2.5 rounded-md bg-warn-bg px-3 py-2.5 text-[12.5px] leading-relaxed text-warn"
+      >
+        <Icon name="warning-circle" class="mt-px size-4 shrink-0" />
+        <span>
+          This is the only time the key is shown. If you lose it, delete this key
+          and create another.
+        </span>
+      </div>
+
+      <label class="flex items-center gap-2 text-[12.5px] text-ink-2">
+        <input type="checkbox" id="ack" /> I have stored the key somewhere safe
+      </label>
+    </div>
+
+    <div
+      class="flex justify-end rounded-b-[11px] border-t border-line bg-surface px-[18px] py-3"
+    >
+      <Button id="finish" disabled>Done</Button>
+    </div>
+  </div>
+</Modal>
+
+<script>
+  import { api, type Key } from "../lib/api";
+  import { ago, date, daysUntil, esc, count } from "../lib/format";
+
+  const el = (id: string) => document.getElementById(id)!;
+  const modal = el("create-modal");
+
+  /** Shows what is left in the bucket right now, not lifetime totals. */
+  function meter(remaining: number, limit: number | null, unit: string): string {
+    const name = `<span class="w-[26px] font-mono text-[10px] text-muted">${unit}</span>`;
+    if (limit === null) {
+      return `<div class="flex items-center gap-[7px]">${name}
+        <span class="text-[10.5px] text-muted">No limit</span>
+      </div>`;
+    }
+    const used = Math.max(0, limit - remaining);
+    const pct = Math.min(100, (used / limit) * 100);
+    const tone = remaining <= 0 ? "crit" : pct >= 75 ? "warn" : "";
+    const value = remaining < 0 ? count(remaining) : `${count(remaining)}/${count(limit)}`;
+    return `<div class="flex items-center gap-[7px]">${name}
+      <span class="meter ${tone}"><span style="width:${pct.toFixed(0)}%"></span></span>
+      <span class="num w-[70px] shrink-0 text-right text-[10.5px] ${remaining < 0 ? "text-crit" : "text-ink-2"}">${value}</span>
+    </div>`;
+  }
+
+  function debtNote(k: Key): string {
+    if (!k.live.in_debt) return "";
+    const secs = Math.max(1, Math.round(k.live.tpm_reset_ms / 1000));
+    return `<div class="flex items-center gap-1 font-mono text-[10.5px] text-crit">
+      In debt, clears in ${secs}s
+    </div>`;
+  }
+
+  function statusPill(k: Key): string {
+    if (k.status === "revoked") return `<span class="pill pill-mute">Revoked</span>`;
+    if (k.status === "expired") return `<span class="pill pill-mute">Expired</span>`;
+    if (k.live.in_debt) return `<span class="pill pill-crit">Rate limited</span>`;
+    if (k.expires_at) {
+      const d = daysUntil(k.expires_at);
+      if (d <= 7) return `<span class="pill pill-warn">Expires in ${d}d</span>`;
+    }
+    return `<span class="pill pill-ok">Active</span>`;
+  }
+
+  function row(k: Key): string {
+    const dim = k.status === "active" ? "" : "opacity-55";
+    return `<tr class="${dim}" data-id="${k.id}">
+      <td>
+        <div class="font-[550]">${esc(k.name)}</div>
+        <div class="text-[11.5px] text-muted">Created ${esc(date(k.created_at))}</div>
+      </td>
+      <td><span class="mono-chip">${esc(k.key_prefix)}</span></td>
+      <td>
+        <div class="flex min-w-[132px] flex-col gap-[5px]">
+          ${meter(k.live.rpm_remaining, k.rpm_limit, "rpm")}
+          ${meter(k.live.tpm_remaining, k.tpm_limit, "tpm")}
+          ${debtNote(k)}
+        </div>
+      </td>
+      <td class="text-[11.5px] text-muted">${k.expires_at ? esc(date(k.expires_at)) : "Never"}</td>
+      <td class="text-[11.5px] text-muted">${esc(ago(k.last_used_at))}</td>
+      <td>${statusPill(k)}</td>
+      <td class="right whitespace-nowrap">
+        ${
+          k.status === "active"
+            ? `<button class="btn btn-ghost btn-sm" data-revoke="${k.id}">Revoke</button>`
+            : ""
+        }
+        <button class="btn btn-ghost btn-sm" data-delete="${k.id}">Delete</button>
+      </td>
+    </tr>`;
+  }
+
+  async function load() {
+    const { keys } = await api.keys();
+    el("keys-empty").hidden = keys.length > 0;
+    el("key-rows").innerHTML = keys.map(row).join("");
+  }
+
+  el("key-rows").addEventListener("click", async (e) => {
+    const target = (e.target as HTMLElement).closest("button");
+    if (!target) return;
+
+    const revoke = target.dataset.revoke;
+    const remove = target.dataset.delete;
+
+    if (revoke) {
+      if (!confirm("Revoke this key? Anything using it stops working immediately.")) return;
+      await api.revokeKey(Number(revoke));
+      load();
+    }
+    if (remove) {
+      if (!confirm("Delete this key permanently? Its usage history goes with it.")) return;
+      await api.deleteKey(Number(remove));
+      load();
+    }
+  });
+
+  function openModal() {
+    modal.hidden = false;
+    el("step-form").hidden = false;
+    el("step-done").hidden = true;
+    el("create-error").hidden = true;
+    (el("ack") as HTMLInputElement).checked = false;
+    (el("finish") as HTMLButtonElement).disabled = true;
+    (el("k-name") as HTMLInputElement).value = "";
+    (el("k-name") as HTMLInputElement).focus();
+  }
+
+  function closeModal() {
+    modal.hidden = true;
+    load();
+  }
+
+  el("open-create").addEventListener("click", openModal);
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal || (e.target as HTMLElement).closest("[data-close]")) {
+      closeModal();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) closeModal();
+  });
+
+  function limitValue(id: string): number | null {
+    const raw = (el(id) as HTMLInputElement).value.replace(/[,_\s]/g, "").trim();
+    if (raw === "") return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+
+  el("do-create").addEventListener("click", async () => {
+    const btn = el("do-create") as HTMLButtonElement;
+    const err = el("create-error");
+    err.hidden = true;
+    btn.disabled = true;
+
+    const days = Number((el("k-exp") as HTMLSelectElement).value);
+    try {
+      const created = await api.createKey({
+        name: (el("k-name") as HTMLInputElement).value,
+        expires_at: days === 0 ? null : Math.floor(Date.now() / 1000) + days * 86400,
+        rpm_limit: limitValue("k-rpm"),
+        tpm_limit: limitValue("k-tpm"),
+      });
+      el("new-key").textContent = created.secret;
+      el("step-form").hidden = true;
+      el("step-done").hidden = false;
+    } catch (e) {
+      err.textContent = e instanceof Error ? e.message : "Could not create the key.";
+      err.hidden = false;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  el("ack").addEventListener("change", (e) => {
+    (el("finish") as HTMLButtonElement).disabled = !(e.target as HTMLInputElement).checked;
+  });
+  el("finish").addEventListener("click", closeModal);
+
+  el("copy-key").addEventListener("click", async () => {
+    const label = el("copy-key").querySelector("span")!;
+    try {
+      await navigator.clipboard.writeText(el("new-key").textContent ?? "");
+      label.textContent = "Copied";
+    } catch {
+      label.textContent = "Press Ctrl C";
+    }
+    setTimeout(() => (label.textContent = "Copy"), 1600);
+  });
+
+  load();
+  setInterval(load, 5000);
+</script>

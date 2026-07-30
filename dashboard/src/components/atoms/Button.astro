@@ -1,0 +1,28 @@
+---
+interface Props {
+  variant?: "primary" | "ghost";
+  size?: "md" | "sm";
+  type?: "button" | "submit";
+  id?: string;
+  class?: string;
+  disabled?: boolean;
+}
+
+const {
+  variant = "primary",
+  size = "md",
+  type = "button",
+  id,
+  class: cls = "",
+  disabled,
+} = Astro.props;
+---
+
+<button
+  type={type}
+  id={id}
+  disabled={disabled}
+  class:list={["btn", `btn-${variant}`, size === "sm" && "btn-sm", cls]}
+>
+  <slot />
+</button>

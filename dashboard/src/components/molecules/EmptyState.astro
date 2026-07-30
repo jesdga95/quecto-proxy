@@ -1,0 +1,9 @@
+---
+interface Props { id?: string; title: string; body?: string }
+const { id, title, body } = Astro.props;
+---
+
+<div id={id} class="flex flex-col items-center gap-1 px-6 py-14 text-center">
+  <p class="text-[13px] font-[550] text-ink-2">{title}</p>
+  {body && <p class="max-w-xs text-[12.5px] text-muted">{body}</p>}
+</div>

@@ -1,0 +1,67 @@
+---
+import Sidebar from "../components/organisms/Sidebar.astro";
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  current: "overview" | "keys" | "logs" | "settings";
+}
+const { title, current } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/admin/favicon.svg" type="image/svg+xml" />
+    <title>{title} · Quecto</title>
+  </head>
+  <body class="m-0">
+    <div class="grid min-h-screen grid-cols-[240px_1fr] max-md:grid-cols-1">
+      <Sidebar current={current} />
+      <main class="min-w-0">
+        <div class="max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4">
+          <slot />
+        </div>
+      </main>
+    </div>
+
+    <script>
+      import { api } from "../lib/api";
+
+      const dot = document.getElementById("upstream-dot");
+      const label = document.getElementById("upstream-label");
+      const host = document.getElementById("upstream-host");
+      const count = document.getElementById("nav-key-count");
+
+      api
+        .health()
+        .then((h) => {
+          if (count) count.textContent = String(h.key_count);
+          if (host) {
+            try {
+              host.textContent = new URL(h.upstream).host;
+            } catch {
+              host.textContent = h.upstream;
+            }
+          }
+          if (dot)
+            dot.style.background = h.upstream_ok ? "var(--ok)" : "var(--crit)";
+          if (label)
+            label.textContent = h.upstream_ok
+              ? "Upstream healthy"
+              : "Upstream unreachable";
+        })
+        .catch(() => {
+          if (label) label.textContent = "Status unavailable";
+        });
+
+      document.getElementById("sign-out")?.addEventListener("click", async () => {
+        await api.logout().catch(() => {});
+        window.location.href = "/admin/login";
+      });
+    </script>
+  </body>
+</html>
