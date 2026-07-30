@@ -26,7 +26,9 @@ const { title, current } = Astro.props;
     <div class="grid min-h-screen grid-cols-[240px_1fr] max-md:block">
       <Sidebar current={current} />
       <main class="min-w-0">
-        <div class="max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4 max-md:pt-5 max-md:pb-10">
+        <!-- Centred, so the space past the cap splits evenly rather than
+             collecting on the right. -->
+        <div class="mx-auto max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4 max-md:pt-5 max-md:pb-10">
           <slot />
         </div>
       </main>
