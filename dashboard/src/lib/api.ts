@@ -158,9 +158,6 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  updateKey: (id: number, body: Record<string, unknown>) =>
-    request<Key>(`/keys/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
-
   revokeKey: (id: number) =>
     request<Key>(`/keys/${id}/revoke`, { method: "POST" }),
 

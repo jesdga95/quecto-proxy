@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var ErrKeyNotFound = errors.New("key not found")
@@ -162,7 +163,7 @@ func (s *Store) UpdateKey(id int64, u KeyUpdate) (*APIKey, error) {
 	}
 	args = append(args, id)
 
-	res, err := s.DB.Exec("UPDATE api_keys SET "+joinComma(sets)+" WHERE id = ?", args...)
+	res, err := s.DB.Exec("UPDATE api_keys SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...)
 	if err != nil {
 		return nil, fmt.Errorf("update key %d: %w", id, err)
 	}
@@ -204,36 +205,6 @@ type UsageDelta struct {
 	LastUsedAt       int64
 }
 
-// FlushUsage applies accumulated counters in one transaction.
-func (s *Store) FlushUsage(deltas []UsageDelta) error {
-	if len(deltas) == 0 {
-		return nil
-	}
-	tx, err := s.DB.Begin()
-	if err != nil {
-		return fmt.Errorf("flush usage: %w", err)
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`UPDATE api_keys SET
-		total_requests = total_requests + ?,
-		total_prompt_tokens = total_prompt_tokens + ?,
-		total_completion_tokens = total_completion_tokens + ?,
-		last_used_at = MAX(COALESCE(last_used_at, 0), ?)
-		WHERE id = ?`)
-	if err != nil {
-		return fmt.Errorf("flush usage: %w", err)
-	}
-	defer stmt.Close()
-
-	for _, d := range deltas {
-		if _, err := stmt.Exec(d.Requests, d.PromptTokens, d.CompletionTokens, d.LastUsedAt, d.KeyID); err != nil {
-			return fmt.Errorf("flush usage for key %d: %w", d.KeyID, err)
-		}
-	}
-	return tx.Commit()
-}
-
 func nullInt64(p *int64) any {
 	if p == nil {
 		return nil
@@ -246,15 +217,4 @@ func nullInt(p *int) any {
 		return nil
 	}
 	return *p
-}
-
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ", "
-		}
-		out += p
-	}
-	return out
 }

@@ -4,7 +4,6 @@ package keys
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"crypto/subtle"
 	"fmt"
 	"strings"
 )
@@ -63,9 +62,4 @@ func FromAuthHeader(h string) (string, bool) {
 		return "", false
 	}
 	return tok, true
-}
-
-// Equal compares two hashes without leaking timing information.
-func Equal(a, b []byte) bool {
-	return subtle.ConstantTimeCompare(a, b) == 1
 }

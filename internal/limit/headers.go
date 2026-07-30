@@ -11,12 +11,12 @@ import (
 func (d Decision) ApplyHeaders(h http.Header) {
 	if d.RPMLimit != nil {
 		h.Set("X-RateLimit-Limit-Requests", strconv.Itoa(*d.RPMLimit))
-		h.Set("X-RateLimit-Remaining-Requests", strconv.Itoa(max0(d.RPMRemaining)))
+		h.Set("X-RateLimit-Remaining-Requests", strconv.Itoa(max(0, d.RPMRemaining)))
 		h.Set("X-RateLimit-Reset-Requests", formatReset(d.RPMReset))
 	}
 	if d.TPMLimit != nil {
 		h.Set("X-RateLimit-Limit-Tokens", strconv.Itoa(*d.TPMLimit))
-		h.Set("X-RateLimit-Remaining-Tokens", strconv.FormatInt(max0i64(d.TPMRemaining), 10))
+		h.Set("X-RateLimit-Remaining-Tokens", strconv.FormatInt(max(0, d.TPMRemaining), 10))
 		h.Set("X-RateLimit-Reset-Tokens", formatReset(d.TPMReset))
 	}
 }
@@ -38,18 +38,4 @@ func formatReset(d time.Duration) string {
 		return "0s"
 	}
 	return d.Round(time.Millisecond).String()
-}
-
-func max0(v int) int {
-	if v < 0 {
-		return 0
-	}
-	return v
-}
-
-func max0i64(v int64) int64 {
-	if v < 0 {
-		return 0
-	}
-	return v
 }

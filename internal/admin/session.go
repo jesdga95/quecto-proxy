@@ -7,7 +7,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -22,8 +21,6 @@ const (
 	sessionCookie       = "quecto_session"
 	sessionTTL          = 14 * 24 * time.Hour
 )
-
-var errBadPassword = errors.New("incorrect password")
 
 type argonParams struct {
 	time    uint32

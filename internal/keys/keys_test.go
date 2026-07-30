@@ -1,6 +1,7 @@
 package keys
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 )
@@ -27,7 +28,7 @@ func TestGenerateShape(t *testing.T) {
 			t.Fatalf("hash length = %d, want 32", len(hash))
 		}
 		sum := Hash(raw)
-		if !Equal(hash, sum[:]) {
+		if !bytes.Equal(hash, sum[:]) {
 			t.Fatal("returned hash does not match Hash of the raw key")
 		}
 		if seen[raw] {
@@ -78,7 +79,7 @@ func BenchmarkHashAndCompare(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		sum := Hash(raw)
-		if !Equal(sum[:], hash) {
+		if !bytes.Equal(sum[:], hash) {
 			b.Fatal("mismatch")
 		}
 	}

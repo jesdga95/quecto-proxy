@@ -51,13 +51,6 @@ func (r *Registry) Lookup(hash [32]byte) (*store.APIKey, bool) {
 	return k, ok
 }
 
-func (r *Registry) ByID(id int64) (*store.APIKey, bool) {
-	r.mu.RLock()
-	k, ok := r.byID[id]
-	r.mu.RUnlock()
-	return k, ok
-}
-
 func (r *Registry) All() []*store.APIKey {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

@@ -57,14 +57,6 @@ func (r *Reservation) Settle(actual int64) {
 	r.limiter.settle(r.keyID, r.reserved-actual, actual)
 }
 
-// Reserved reports how many tokens were held at admission.
-func (r *Reservation) Reserved() int64 {
-	if r == nil {
-		return 0
-	}
-	return r.reserved
-}
-
 // settle returns the unused part of a reservation and records what the request
 // really spent. The tally is kept for every key, including unlimited ones, so
 // the dashboard can show a rate even where nothing is being enforced.

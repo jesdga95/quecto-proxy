@@ -31,7 +31,6 @@ type Writer struct {
 
 	ch      chan proxy.Record
 	dropped atomic.Int64
-	written atomic.Int64
 	stopped chan struct{}
 }
 
@@ -54,7 +53,6 @@ func (w *Writer) Report(rec proxy.Record) {
 }
 
 func (w *Writer) Dropped() int64 { return w.dropped.Load() }
-func (w *Writer) Written() int64 { return w.written.Load() }
 
 // Run drains the buffer until the context ends, then flushes what is left.
 func (w *Writer) Run(ctx context.Context) {
@@ -105,8 +103,6 @@ func (w *Writer) write(batch []store.LogRow) []store.LogRow {
 	}
 	if err := w.st.WriteBatch(batch); err != nil {
 		w.log.Error("could not write usage records", "count", len(batch), "error", err)
-	} else {
-		w.written.Add(int64(len(batch)))
 	}
 	return batch[:0]
 }
