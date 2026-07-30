@@ -25,7 +25,8 @@ type Decision struct {
 	TPMLimit     *int
 	TPMRemaining int64
 	TPMReset     time.Duration
-	InDebt       bool
+	// True once the balance is spent, which is when token limited calls are refused.
+	TPMExhausted bool
 
 	// What the key spent over the last minute, which is what the rpm and tpm
 	// labels mean to a reader. Set whether or not a limit is configured.
@@ -159,8 +160,8 @@ func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 		max := float64(*s.tpmLimit)
 		s.tpm.refill(now, max)
 		d.TPMRemaining = int64(s.tpm.balance)
-		// A balance of exactly zero is refused too, so it counts as limited.
-		d.InDebt = s.tpm.balance <= 0
+		// A balance of exactly zero is refused too, so it counts as exhausted.
+		d.TPMExhausted = s.tpm.balance <= 0
 		d.TPMReset = s.tpm.until(1, max)
 	}
 }

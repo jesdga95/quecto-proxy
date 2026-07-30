@@ -102,7 +102,7 @@ Everything but the listen address and database path is also editable from the da
 
 ## The part that will surprise you
 
-A request's token cost is only knowable *after* it finishes, so token limits reserve on admission and settle on completion. **The bucket is allowed to go negative.** One reply larger than the whole per-minute allowance leaves that key in debt, locked out until it refills. Clamping at zero would make oversized requests free. The dashboard shows the debt and counts down to when it clears.
+A request's token cost is only knowable *after* it finishes, so token limits reserve on admission and settle on completion. **The bucket is allowed to go negative.** One reply larger than the whole per-minute allowance overdraws that key, locking it out until the balance climbs back above zero. Clamping at zero would make oversized requests free. The dashboard marks the key rate limited while that lasts.
 
 To count tokens on streamed replies, Quecto adds `stream_options` to the upstream request and strips the resulting usage frame back out, so callers see a byte stream identical to talking to the model directly. Servers that reject the field are detected on first refusal and fall back. Responses carry OpenAI's own `X-RateLimit-*` headers, so SDK backoff logic works unchanged.
 

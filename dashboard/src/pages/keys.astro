@@ -152,7 +152,7 @@ import FormField from "../components/molecules/FormField.astro";
   const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
 
   /** How much of the allowance is spent, which is what the limiter enforces.
-   * Remaining goes negative on a key in debt, so it is clamped to read as full. */
+   * Remaining goes negative on an overdrawn key, so it is clamped to read as full. */
   function usage(
     used: number,
     remaining: number,
@@ -185,9 +185,11 @@ import FormField from "../components/molecules/FormField.astro";
   /** Colour carries the state, so the word goes to the tooltip and to readers. */
   function statusDot(k: Key): string {
     const label =
-      k.status === "active" && k.live.in_debt ? "Rate limited" : STATUS[k.status];
+      k.status === "active" && k.live.tpm_exhausted
+        ? "Rate limited"
+        : STATUS[k.status];
     const tone =
-      k.status !== "active" ? "bg-muted" : k.live.in_debt ? "bg-crit" : "bg-ok";
+      k.status !== "active" ? "bg-muted" : k.live.tpm_exhausted ? "bg-crit" : "bg-ok";
     return `<span class="size-[7px] shrink-0 rounded-full ${tone}" title="${label}"></span>
       <span class="sr-only">${label}</span>`;
   }

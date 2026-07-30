@@ -3,8 +3,8 @@ package limit
 import "time"
 
 // tokenBucket refills at limit/60 per second and is allowed to go negative.
-// A request that costs more than the whole allowance leaves the key in debt
-// until the bucket climbs back above zero.
+// A request costing more than the whole allowance overdraws it, and the key
+// stays locked out until the balance climbs back above zero.
 type tokenBucket struct {
 	balance float64
 	updated time.Time

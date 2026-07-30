@@ -17,7 +17,7 @@ export interface Key {
     rpm_remaining: number;
     tpm_used: number;
     tpm_remaining: number;
-    in_debt: boolean;
+    tpm_exhausted: boolean;
   };
 }
 

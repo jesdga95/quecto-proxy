@@ -223,12 +223,12 @@ func TestRequestLimitReturns429WithHeaders(t *testing.T) {
 	}
 }
 
-func TestTokenDebtLocksTheKeyOut(t *testing.T) {
+func TestOverdrawnTokensLockTheKeyOut(t *testing.T) {
 	opts := nullupstream.DefaultOptions()
 	opts.PromptTokens = 5000
 	opts.CompletionTokens = 5000
 	r := newRig(t, opts)
-	// The allowance is far smaller than one reply, so one call creates debt.
+	// The allowance is far smaller than one reply, so one call overdraws it.
 	r.setLimits(nil, intp(600))
 
 	resp := r.post("/v1/chat/completions", `{"model":"m","max_tokens":10}`, r.secret)
@@ -243,7 +243,7 @@ func TestTokenDebtLocksTheKeyOut(t *testing.T) {
 	resp.Body.Close()
 
 	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("second request = %d, want 429 while the key is in token debt", resp.StatusCode)
+		t.Fatalf("second request = %d, want 429 while the token balance is overdrawn", resp.StatusCode)
 	}
 	if !bytes.Contains(body, []byte("tokens_rate_limit_exceeded")) {
 		t.Fatalf("body = %s", body)

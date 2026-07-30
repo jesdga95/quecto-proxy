@@ -116,7 +116,7 @@ func TestSettleIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestOversizedRequestPutsKeyInDebtAndLocksItOut(t *testing.T) {
+func TestOversizedRequestOverdrawsAndLocksTheKeyOut(t *testing.T) {
 	l, advance := clocked()
 	k := key(1, nil, i(10_000))
 
@@ -128,13 +128,13 @@ func TestOversizedRequestPutsKeyInDebtAndLocksItOut(t *testing.T) {
 	res.Settle(40_000)
 
 	peek := l.Peek(k)
-	if !peek.InDebt {
-		t.Fatalf("balance %d is not reported as debt", peek.TPMRemaining)
+	if !peek.TPMExhausted {
+		t.Fatalf("balance %d is not reported as exhausted", peek.TPMRemaining)
 	}
 
 	_, d = l.Admit(k, 1)
 	if d.Allowed {
-		t.Fatal("a key in debt was admitted")
+		t.Fatal("an overdrawn key was admitted")
 	}
 	if d.Reason != "tokens" {
 		t.Fatalf("reason = %q, want tokens", d.Reason)
@@ -143,11 +143,11 @@ func TestOversizedRequestPutsKeyInDebtAndLocksItOut(t *testing.T) {
 	// Balance is -30000 refilling at 10000/60 per second, so about 180s to reach 0.
 	advance(179 * time.Second)
 	if _, d := l.Admit(k, 1); d.Allowed {
-		t.Fatal("admitted before the debt was paid off")
+		t.Fatal("admitted before the balance recovered")
 	}
 	advance(3 * time.Second)
 	if _, d := l.Admit(k, 1); !d.Allowed {
-		t.Fatal("still locked out after the debt should have cleared")
+		t.Fatal("still locked out after the balance should have recovered")
 	}
 }
 
@@ -162,7 +162,7 @@ func TestRefusalConsumesNothing(t *testing.T) {
 	before := l.Peek(k).RPMRemaining
 	for n := 0; n < 5; n++ {
 		if _, d := l.Admit(k, 1); d.Allowed {
-			t.Fatal("admitted while in token debt")
+			t.Fatal("admitted while the token balance was overdrawn")
 		}
 	}
 	if after := l.Peek(k).RPMRemaining; after != before {
@@ -341,7 +341,7 @@ func TestHeadersOmitUnlimitedDimensions(t *testing.T) {
 	}
 }
 
-func TestDebtIsClampedToZeroInHeaders(t *testing.T) {
+func TestOverdrawnBalanceIsClampedToZeroInHeaders(t *testing.T) {
 	l, _ := clocked()
 	k := key(1, nil, i(1000))
 	res, _ := l.Admit(k, 0)
