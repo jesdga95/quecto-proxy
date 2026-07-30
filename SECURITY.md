@@ -19,6 +19,7 @@ Set `QUECTO_TRUST_PROXY_HEADERS=true` only when something you control sits in fr
 | API keys | 238 bits from `crypto/rand`, stored only as SHA-256, compared in constant time, shown once at creation |
 | Admin password | argon2id, 64MB and 3 passes, concurrency-bounded so a flood cannot exhaust memory |
 | Sessions | HttpOnly, `SameSite=Strict`, `Secure` when the request is HTTPS. The signing key folds in the password hash, so changing the password invalidates every existing session |
+| Secrets at rest | `quecto.db` is created `0600`, and the container runs as a non-root user, so the plaintext upstream credential and signing key are not world-readable by default |
 | CSRF | `SameSite=Strict` plus JSON-only request bodies. There is no synchroniser token |
 | XSS | Every user-controlled string is escaped before reaching the DOM. No inline event handlers, no external scripts |
 | Path traversal | The dashboard is served from an embedded filesystem, so there is no path to escape to |
@@ -33,7 +34,8 @@ These are real, and accepted for now.
 - **No per-IP rate limiting.** Limits are per key. An attacker with no valid key can still generate load; auth is cheap enough to absorb it, but nothing throttles by source address.
 - **No login lockout.** Concurrent verifications are capped, which bounds memory and holds brute force to roughly 50 attempts per second. Use a long admin password, and prefer putting the dashboard behind your reverse proxy's own auth.
 - **A compromised admin session is an SSRF pivot.** The upstream URL is editable from the dashboard, so an attacker with admin access can point Quecto at internal addresses and read the responses.
-- **Secrets sit in the database in plaintext.** The upstream credential and the session signing key have to be usable, so `quecto.db` deserves file permissions and a volume you trust.
+- **Secrets sit in the database in plaintext.** The upstream credential and the session signing key have to be usable. Quecto creates `quecto.db` as `0600`, but it is not encrypted, so keep it on a volume you trust.
+- **Sessions are stateless, so signing out is client-side.** Logout clears the cookie in the browser, but a token that was captured stays valid until it expires, at most 14 days. Changing the admin password is what revokes every outstanding session at once.
 - **No audit log** of administrative actions.
 - **Single instance.** Rate limits live in memory, so running two copies gives each key its limit twice over.
 

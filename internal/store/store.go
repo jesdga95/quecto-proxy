@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"embed"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -19,6 +20,13 @@ type Store struct {
 }
 
 func Open(path string) (*Store, error) {
+	// The database holds the upstream credential, the session signing key, and
+	// the admin password hash in plaintext, so create it private before the
+	// driver can and never leave it world-readable.
+	if err := createPrivate(path); err != nil {
+		return nil, err
+	}
+
 	pragmas := []string{
 		"_pragma=journal_mode(WAL)",
 		"_pragma=busy_timeout(5000)",
@@ -36,11 +44,40 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("connect to database at %s: %w", path, err)
 	}
+	// WAL mode creates -wal and -shm sidecars during the first connection, and
+	// they carry the same data, so lock them down to match the main file.
+	restrict(path + "-wal")
+	restrict(path + "-shm")
 	if err := migrate(db); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return &Store{DB: db}, nil
+}
+
+// createPrivate makes the database file with owner-only permissions when it
+// does not exist yet, and tightens an existing one left loose by an older
+// build. An in-memory or otherwise pathless DSN is left alone.
+func createPrivate(path string) error {
+	if path == "" || strings.HasPrefix(path, ":") || strings.Contains(path, ":memory:") {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("create database file %s: %w", path, err)
+	}
+	f.Close()
+	restrict(path)
+	return nil
+}
+
+// restrict tightens a file to owner-only, ignoring one that is not there.
+func restrict(path string) {
+	if err := os.Chmod(path, 0o600); err != nil && !os.IsNotExist(err) {
+		// Best effort: a filesystem that does not carry Unix modes (a bind mount
+		// from another OS) cannot be locked down here, and that is not fatal.
+		return
+	}
 }
 
 func (s *Store) Close() error { return s.DB.Close() }

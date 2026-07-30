@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -57,17 +58,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	if body.NewPassword != nil {
 		pw := strings.TrimSpace(*body.NewPassword)
-		if len(pw) < 10 {
-			writeError(w, http.StatusBadRequest, "Use a password of at least 10 characters.")
+		if len(pw) < minPasswordLen {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("Use a password of at least %d characters.", minPasswordLen))
 			return
 		}
 		hash, err := hashPassword(pw)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeServerError(w, err)
 			return
 		}
 		if err := s.st.SetSetting(settingPasswordHash, hash); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeServerError(w, err)
 			return
 		}
 		s.rotatePassword(hash)

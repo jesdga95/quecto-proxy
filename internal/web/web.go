@@ -101,7 +101,7 @@ func Handler(authed Authenticated) (http.Handler, error) {
 			// Which page comes back now depends on the session cookie.
 			w.Header().Set("Vary", "Cookie")
 		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		securityHeaders(w)
 		w.Write(body)
 	}), nil
 }
@@ -126,8 +126,33 @@ func NotFoundHandler() http.Handler {
 func notFoundPage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	securityHeaders(w)
 	w.WriteHeader(http.StatusNotFound)
 	w.Write(notFoundHTML)
+}
+
+// contentSecurityPolicy locks the dashboard down to its own origin. Scripts are
+// all external hashed modules, so no inline script is allowed; styles keep
+// unsafe-inline because the build and the live meter set a few style attributes.
+const contentSecurityPolicy = "default-src 'self'; " +
+	"base-uri 'none'; " +
+	"frame-ancestors 'none'; " +
+	"form-action 'self'; " +
+	"object-src 'none'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"script-src 'self'; " +
+	"connect-src 'self'"
+
+// securityHeaders sets the response hardening the dashboard carries on every
+// document. Quecto terminates no TLS, so HSTS is left to whatever fronts it.
+func securityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("Content-Security-Policy", contentSecurityPolicy)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
 }
 
 // notBuiltHandler explains the missing dashboard rather than returning a bare
@@ -140,6 +165,7 @@ func notBuiltHandler() http.Handler {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
+		securityHeaders(w)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		w.Write(notBuiltHTML)
 	})

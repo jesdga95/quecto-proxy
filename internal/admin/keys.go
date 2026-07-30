@@ -70,7 +70,7 @@ func (s *Server) toDTO(k *store.APIKey, now int64) keyDTO {
 func (s *Server) handleListKeys(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.st.ListKeys()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	now := s.now().Unix()
@@ -119,7 +119,7 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 	raw, hash, display, err := keys.Generate()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	k, err := s.st.CreateKey(store.NewKey{
@@ -127,11 +127,11 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: body.ExpiresAt, RPMLimit: body.RPMLimit, TPMLimit: body.TPMLimit,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	if err := s.registry.Reload(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 
@@ -207,7 +207,7 @@ func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.registry.Reload(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, s.toDTO(updated, now))
@@ -223,7 +223,7 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.registry.Reload(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	fresh, err := s.st.GetKey(k.ID)
@@ -244,7 +244,7 @@ func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.registry.Reload(); err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -279,5 +279,5 @@ func writeStoreError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "That key no longer exists.")
 		return
 	}
-	writeError(w, http.StatusInternalServerError, err.Error())
+	writeServerError(w, err)
 }

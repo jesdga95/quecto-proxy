@@ -21,7 +21,7 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 
 	entries, next, err := s.st.ListLogs(f)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -47,27 +47,27 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	totals, err := s.st.Totals(from.Unix(), to.Unix())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	series, err := s.st.Series(from.Unix(), to.Unix())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	top, err := s.st.TopKeys(from.Unix(), to.Unix(), 5)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	ttft, err := s.st.Percentile("ttft_ms", from.Unix(), to.Unix(), 0.95)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	dur, err := s.st.Percentile("duration_ms", from.Unix(), to.Unix(), 0.95)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 
@@ -96,7 +96,7 @@ type healthResponse struct {
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	rows, bytes, err := s.st.LogStats()
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeServerError(w, err)
 		return
 	}
 	known, supported := s.health.UsageReporting()

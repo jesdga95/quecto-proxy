@@ -77,11 +77,13 @@ export function statusClass(status: number): string {
   return "code-2xx";
 }
 
-/** Escapes text before it goes into innerHTML. */
+/** Escapes text before it goes into innerHTML, covering both quote styles so a
+ * value is safe in a single or double quoted attribute as well as in text. */
 export function esc(s: string): string {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

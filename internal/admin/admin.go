@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -59,6 +60,9 @@ func New(cfg *config.Config, st *store.Store, registry *keys.Registry, limiter *
 	if !ok {
 		if cfg.AdminPassword == "" {
 			return nil, errors.New("no admin password is set. Start once with QUECTO_ADMIN_PASSWORD to create one")
+		}
+		if len(cfg.AdminPassword) < minPasswordLen {
+			return nil, fmt.Errorf("QUECTO_ADMIN_PASSWORD must be at least %d characters", minPasswordLen)
 		}
 		if pwHash, err = hashPassword(cfg.AdminPassword); err != nil {
 			return nil, err
@@ -258,4 +262,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]any{"error": msg})
+}
+
+// writeServerError keeps the internal detail in the log and hands the browser
+// a generic message, so a database or filesystem error cannot leak a path or a
+// query through the dashboard even to a signed in admin.
+func writeServerError(w http.ResponseWriter, err error) {
+	slog.Error("admin request failed", "error", err)
+	writeError(w, http.StatusInternalServerError, "Something went wrong. Check the server logs for detail.")
 }

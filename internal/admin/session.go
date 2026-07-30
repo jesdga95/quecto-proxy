@@ -20,6 +20,10 @@ const (
 	settingSessionKey   = "session_secret"
 	sessionCookie       = "quecto_session"
 	sessionTTL          = 14 * 24 * time.Hour
+
+	// minPasswordLen is the floor for the admin password, enforced both when it
+	// is seeded from the environment and when it is changed from the dashboard.
+	minPasswordLen = 10
 )
 
 type argonParams struct {
