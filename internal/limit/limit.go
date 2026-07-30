@@ -21,6 +21,8 @@ type Decision struct {
 	RPMLimit     *int
 	RPMRemaining int
 	RPMReset     time.Duration
+	// True once the burst is spent, which is when request limited calls are refused.
+	RPMExhausted bool
 
 	TPMLimit     *int
 	TPMRemaining int64
@@ -154,6 +156,8 @@ func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 			avail = 0
 		}
 		d.RPMRemaining = int(avail)
+		// Admission needs a whole token, so any fraction is already a refusal.
+		d.RPMExhausted = avail < 1
 		d.RPMReset = untilOneToken(s.rpm, now)
 	}
 	if s.tpm != nil {

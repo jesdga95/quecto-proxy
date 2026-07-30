@@ -151,6 +151,32 @@ func TestOversizedRequestOverdrawsAndLocksTheKeyOut(t *testing.T) {
 	}
 }
 
+func TestRPMExhaustedFollowsAdmission(t *testing.T) {
+	l, advance := clocked()
+	k := key(1, i(2), nil)
+
+	if l.Peek(k).RPMExhausted {
+		t.Fatal("a fresh key reports its request allowance as spent")
+	}
+	for n := 0; n < 2; n++ {
+		if _, d := l.Admit(k, 0); !d.Allowed {
+			t.Fatalf("refused request %d of the burst", n+1)
+		}
+	}
+	if !l.Peek(k).RPMExhausted {
+		t.Fatal("the burst is spent but the key is not reported as exhausted")
+	}
+	if _, d := l.Admit(k, 0); d.Allowed {
+		t.Fatal("admitted past the burst")
+	}
+
+	// Refilling at 2/60 per second, so a whole token is back after 30s.
+	advance(30 * time.Second)
+	if l.Peek(k).RPMExhausted {
+		t.Fatal("still reported as exhausted once a token refilled")
+	}
+}
+
 func TestRefusalConsumesNothing(t *testing.T) {
 	l, _ := clocked()
 	k := key(1, i(100), i(1000))

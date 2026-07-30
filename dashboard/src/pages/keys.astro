@@ -20,11 +20,22 @@ import FormField from "../components/molecules/FormField.astro";
 
   <div class="card overflow-x-auto">
     <table class="key-table">
+      <!-- Every column is pinned, so the live cells cannot resize the table as
+           they refresh and spare width spreads across all six in proportion
+           rather than piling onto whichever one was left to absorb it. -->
+      <colgroup>
+        <col class="w-[192px]" />
+        <col class="w-[164px]" />
+        <col class="w-[288px]" />
+        <col class="w-[104px]" />
+        <col class="w-[120px]" />
+        <col class="w-[92px]" />
+      </colgroup>
       <thead>
         <tr>
           <th>Name</th>
           <th>Key</th>
-          <th>Per minute</th>
+          <th>Current usage</th>
           <th>Expires</th>
           <th>Last used</th>
           <th></th>
@@ -151,46 +162,65 @@ import FormField from "../components/molecules/FormField.astro";
   };
   const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
 
-  /** How much of the allowance is spent, which is what the limiter enforces.
-   * Remaining goes negative on an overdrawn key, so it is clamped to read as full. */
-  function usage(
+  /** One rail per limit, showing how much of the allowance the limiter has left.
+   * Remaining goes negative on an overdrawn key, so it is clamped to read as full.
+   * The fill never drops below a sliver, so an idle rail still reads as a rail. */
+  function meter(
     used: number,
     remaining: number,
     limit: number | null,
     unit: string,
     fmt: (n: number) => string,
   ): string {
-    const spent =
-      limit === null
-        ? `${fmt(used)}/∞`
-        : `${fmt(limit - Math.max(0, Math.min(limit, remaining)))}/${fmt(limit)}`;
-    const tone = limit !== null && remaining <= 0 ? "text-crit" : "text-ink-2";
-    return `<span class="whitespace-nowrap">
-      <span class="num text-[11.5px] ${tone}">${spent}</span>
-      <span class="font-mono text-[10px] tracking-[0.04em] text-muted">${unit}</span>
-    </span>`;
-  }
+    let state = "is-idle";
+    let value = `${fmt(used)}/∞`;
+    let pct = 2;
 
-  function perMinute(k: Key): string {
-    if (k.rpm_limit === null && k.tpm_limit === null) {
-      return `<span class="text-[12px] text-muted">No limit</span>`;
+    if (limit !== null) {
+      const spent = limit - Math.max(0, Math.min(limit, remaining));
+      value = `${fmt(spent)}/${fmt(limit)}`;
+      pct = Math.max(2, Math.min(100, Math.round((spent / limit) * 100)));
+      state = remaining <= 0 ? "is-full" : spent === 0 ? "is-idle" : "";
     }
-    return (
-      usage(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "RPM", count) +
-      `<span class="text-[11px] text-line-strong">·</span>` +
-      usage(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "TPM", tokensTight)
-    );
+
+    return `<div class="meter ${state}">
+      <div class="meter-top">
+        <span class="unit">${unit}</span><span class="num">${value}</span>
+      </div>
+      <div class="rail"><span style="width:${pct}%"></span></div>
+    </div>`;
   }
 
-  /** Colour carries the state, so the word goes to the tooltip and to readers. */
-  function statusDot(k: Key): string {
-    const label =
-      k.status === "active" && k.live.tpm_exhausted
-        ? "Rate limited"
-        : STATUS[k.status];
-    const tone =
-      k.status !== "active" ? "bg-muted" : k.live.tpm_exhausted ? "bg-crit" : "bg-ok";
-    return `<span class="size-[7px] shrink-0 rounded-full ${tone}" title="${label}"></span>
+  function usageCell(k: Key): string {
+    if (k.status !== "active") {
+      return `<td class="text-[12.5px] text-muted">
+        <span class="key-label">Current usage</span>${STATUS[k.status]}, no traffic accepted
+      </td>`;
+    }
+    return `<td>
+      <span class="key-label">Current usage</span>
+      <div class="meters">
+        ${meter(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "rpm", count)}
+        ${meter(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "tpm", tokensTight)}
+      </div>
+    </td>`;
+  }
+
+  /** Ranked, so being refused outranks lapsing when a key is doing both. */
+  function stateDot(k: Key): string {
+    let tone = "bg-ok";
+    let label = "Active";
+    if (k.status !== "active") {
+      tone = "bg-muted";
+      label = STATUS[k.status];
+    } else if (k.live.rpm_exhausted || k.live.tpm_exhausted) {
+      tone = "bg-crit";
+      label = "Rate limited";
+    } else if (k.expires_at && daysUntil(k.expires_at) <= 7) {
+      tone = "bg-warn";
+      label = "Expires soon";
+    }
+    return `<span class="size-[6px] shrink-0 rounded-full ${tone}" title="${label}"></span>
       <span class="sr-only">${label}</span>`;
   }
 
@@ -219,9 +249,9 @@ import FormField from "../components/molecules/FormField.astro";
     return `<tr class="${k.status === "active" ? "" : "opacity-60"}" data-id="${k.id}">
       <td>
         <div class="flex items-center gap-2.5">
-          ${statusDot(k)}
+          ${stateDot(k)}
           <span
-            class="max-w-[240px] truncate font-medium"
+            class="min-w-0 truncate font-medium"
             title="Created ${esc(date(k.created_at))}"
           >${esc(k.name)}</span>
         </div>
@@ -230,11 +260,7 @@ import FormField from "../components/molecules/FormField.astro";
         <span class="key-label">Key</span>
         <span class="mono-chip whitespace-nowrap">${esc(k.key_prefix)}</span>
       </td>
-      <td>
-        <div class="flex flex-wrap items-baseline gap-x-1.5">
-          <span class="key-label">Per minute</span>${perMinute(k)}
-        </div>
-      </td>
+      ${usageCell(k)}
       <td class="text-[12px]"><span class="key-label">Expires</span>${expiry(k)}</td>
       <td class="text-[12px]">
         <span class="key-label">Last used</span>

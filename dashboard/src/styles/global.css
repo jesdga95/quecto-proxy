@@ -274,6 +274,58 @@
     background: var(--surface-2);
     color: var(--muted);
   }
+  /* A labelled rail per limit, sized so the pair holds still as the numbers move. */
+  .meters {
+    display: flex;
+    gap: 22px;
+  }
+  /* Sized by its own label and count, so the pair sits left with slack to spare. */
+  .meter {
+    min-width: 92px;
+  }
+  .meter-top {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 5px;
+  }
+  .meter .unit {
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .meter .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-2);
+  }
+  .rail {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border);
+    overflow: hidden;
+  }
+  .rail span {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--muted);
+  }
+  /* Spent reads in the warning colour, untouched recedes to a hairline. */
+  .meter.is-full .num {
+    color: var(--crit);
+    font-weight: 600;
+  }
+  .meter.is-full .rail span {
+    background: var(--crit);
+  }
+  .meter.is-idle .rail span {
+    background: var(--border-2);
+  }
 
   .mono-chip {
     font-family: var(--font-mono);
@@ -325,12 +377,12 @@
     letter-spacing: 0.08em;
     color: var(--muted);
     font-weight: 500;
-    padding: 9px 14px;
+    padding: 13px 18px;
     border-bottom: 1px solid var(--border);
     white-space: nowrap;
   }
   tbody td {
-    padding: 11px 14px;
+    padding: 15px 18px;
     border-bottom: 1px solid var(--border);
     vertical-align: middle;
   }
@@ -345,8 +397,19 @@
     text-align: right;
   }
 
+  /* Widths come from the colgroup rather than the content, so a key whose
+     usage or last-used text changes on refresh cannot shift the columns. */
+  .key-table {
+    table-layout: fixed;
+    min-width: 960px;
+  }
   .key-table td {
     white-space: nowrap;
+  }
+  /* Pinned columns clip instead of pushing. Actions keep their focus rings. */
+  .key-table td:not(.key-actions) {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   /* Stands in for the column heading once a key row has stacked. */
   .key-label {
@@ -368,6 +431,10 @@
     .key-table tbody {
       display: block;
     }
+    /* Stacked rows are as wide as the phone, so the pinned layout is dropped. */
+    .key-table {
+      min-width: 0;
+    }
     .key-table thead {
       display: none;
     }
@@ -387,6 +454,7 @@
       padding: 0;
       border: 0;
       white-space: normal;
+      overflow: visible;
     }
     .key-table td.key-actions {
       grid-row: 1;

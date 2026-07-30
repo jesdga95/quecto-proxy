@@ -15,6 +15,7 @@ export interface Key {
   live: {
     rpm_used: number;
     rpm_remaining: number;
+    rpm_exhausted: boolean;
     tpm_used: number;
     tpm_remaining: number;
     tpm_exhausted: boolean;
