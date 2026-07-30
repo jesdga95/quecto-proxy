@@ -9,14 +9,11 @@ import StatTile from "../components/molecules/StatTile.astro";
       <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">Overview</h1>
       <p id="page-sub" class="text-[13px] text-muted">Last 24 hours.</p>
     </div>
-    <div class="flex gap-2">
-      <select id="range" class="select w-auto">
-        <option value="24h" selected>Last 24 hours</option>
-        <option value="7d">Last 7 days</option>
-        <option value="30d">Last 30 days</option>
-      </select>
-      <button id="theme-toggle" class="btn btn-ghost btn-sm">Toggle theme</button>
-    </div>
+    <select id="range" class="select w-auto">
+      <option value="24h" selected>Last 24 hours</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
   </div>
 
   <div class="grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-3">
@@ -35,7 +32,7 @@ import StatTile from "../components/molecules/StatTile.astro";
   <section class="mt-[30px]">
     <div class="card px-[18px] pt-4 pb-3">
       <div class="mb-3.5 flex items-baseline justify-between">
-        <span class="text-[13px] font-[550]">Requests over time</span>
+        <span class="text-[13px] font-medium">Requests over time</span>
         <span id="chart-peak" class="num text-[11.5px] text-muted"></span>
       </div>
       <div id="chart" class="h-32"></div>
@@ -183,7 +180,7 @@ import StatTile from "../components/molecules/StatTile.astro";
     body.innerHTML = top
       .map(
         (k) => `<tr>
-          <td class="font-[550]">${esc(k.key_name || "Deleted key")}</td>
+          <td class="font-medium">${esc(k.key_name || "Deleted key")}</td>
           <td>${k.model ? `<span class="mono-chip">${esc(k.model)}</span>` : ""}</td>
           <td class="right num">${count(k.requests)}</td>
           <td class="right num">${tokensFlat(k.tokens)}</td>
@@ -197,17 +194,6 @@ import StatTile from "../components/molecules/StatTile.astro";
     el("page-sub").textContent = label + ".";
     load();
   });
-
-  el("theme-toggle").addEventListener("click", () => {
-    const root = document.documentElement;
-    const dark = matchMedia("(prefers-color-scheme: dark)").matches;
-    const now = root.getAttribute("data-theme") ?? (dark ? "dark" : "light");
-    root.setAttribute("data-theme", now === "dark" ? "light" : "dark");
-    localStorage.setItem("quecto-theme", now === "dark" ? "light" : "dark");
-  });
-
-  const saved = localStorage.getItem("quecto-theme");
-  if (saved) document.documentElement.setAttribute("data-theme", saved);
 
   load();
   setInterval(load, 30_000);

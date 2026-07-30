@@ -13,8 +13,10 @@ export interface Key {
   total_prompt_tokens: number;
   total_completion_tokens: number;
   live: {
+    rpm_used: number;
     rpm_remaining: number;
     rpm_reset_ms: number;
+    tpm_used: number;
     tpm_remaining: number;
     tpm_reset_ms: number;
     in_debt: boolean;

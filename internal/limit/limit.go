@@ -26,6 +26,11 @@ type Decision struct {
 	TPMRemaining int64
 	TPMReset     time.Duration
 	InDebt       bool
+
+	// What the key spent over the last minute, which is what the rpm and tpm
+	// labels mean to a reader. Set whether or not a limit is configured.
+	RPMUsed int64
+	TPMUsed int64
 }
 
 type keyState struct {
@@ -35,6 +40,7 @@ type keyState struct {
 	tpmLimit *int
 	tpm      *tokenBucket
 
+	used     window
 	lastSeen time.Time
 }
 
@@ -111,6 +117,8 @@ func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision)
 		return nil, d
 	}
 
+	s.used.add(now, 1, 0)
+
 	var res *Reservation
 	if s.tpm != nil {
 		if reserve < 0 {
@@ -138,6 +146,7 @@ func (l *Limiter) Peek(k *store.APIKey) Decision {
 }
 
 func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
+	d.RPMUsed, d.TPMUsed = s.used.sum(now)
 	if s.rpm != nil {
 		avail := s.rpm.TokensAt(now)
 		if avail < 0 {

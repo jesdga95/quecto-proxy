@@ -54,9 +54,7 @@ func (r *Reservation) Settle(actual int64) {
 	if actual < 0 {
 		actual = 0
 	}
-	if refund := r.reserved - actual; refund != 0 {
-		r.limiter.credit(r.keyID, float64(refund))
-	}
+	r.limiter.settle(r.keyID, r.reserved-actual, actual)
 }
 
 // Reserved reports how many tokens were held at admission.
@@ -67,15 +65,23 @@ func (r *Reservation) Reserved() int64 {
 	return r.reserved
 }
 
-func (l *Limiter) credit(keyID int64, amount float64) {
+// settle returns the unused part of a reservation and records what the request
+// really spent. The tally is kept for every key, including unlimited ones, so
+// the dashboard can show a rate even where nothing is being enforced.
+func (l *Limiter) settle(keyID int64, refund, actual int64) {
+	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.byKey[keyID]
-	if s == nil || s.tpm == nil || s.tpmLimit == nil {
+	if s == nil {
+		return
+	}
+	s.used.add(now, 0, actual)
+	if s.tpm == nil || s.tpmLimit == nil {
 		return
 	}
 	max := float64(*s.tpmLimit)
-	s.tpm.balance += amount
+	s.tpm.balance += float64(refund)
 	if s.tpm.balance > max {
 		s.tpm.balance = max
 	}

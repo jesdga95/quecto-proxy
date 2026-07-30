@@ -14,6 +14,13 @@ export function tokensFlat(n: number): string {
   return value + unit;
 }
 
+/** Narrower still, for the two counts that share a table cell: 950, 1.3k, 120k. */
+export function tokensTight(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(n >= 10_000 ? 0 : 1) + "k";
+  return String(n);
+}
+
 export function millis(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return "";
   if (ms >= 1000) return (ms / 1000).toFixed(2) + "s";

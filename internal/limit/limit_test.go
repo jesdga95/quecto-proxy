@@ -209,6 +209,63 @@ func TestEditingALimitRebuildsTheBucket(t *testing.T) {
 	}
 }
 
+func TestUsageThisMinuteOutlivesTheRefill(t *testing.T) {
+	l, advance := clocked()
+	k := key(1, i(60), i(120_000))
+
+	for n := 0; n < 3; n++ {
+		res, _ := l.Admit(k, 2048)
+		res.Settle(1273)
+		advance(time.Second)
+	}
+
+	// Both buckets have long since refilled, but the minute's usage stands.
+	advance(10 * time.Second)
+	d := l.Peek(k)
+	if d.RPMUsed != 3 {
+		t.Errorf("requests this minute = %d, want 3", d.RPMUsed)
+	}
+	if d.TPMUsed != 3819 {
+		t.Errorf("tokens this minute = %d, want 3819", d.TPMUsed)
+	}
+	if d.RPMRemaining != 60 || d.TPMRemaining != 120_000 {
+		t.Errorf("buckets should have refilled: rpm=%d tpm=%d", d.RPMRemaining, d.TPMRemaining)
+	}
+
+	// The window is a minute wide, so it eventually empties on its own.
+	advance(60 * time.Second)
+	if d := l.Peek(k); d.RPMUsed != 0 || d.TPMUsed != 0 {
+		t.Errorf("usage = %d requests %d tokens after a quiet minute, want 0", d.RPMUsed, d.TPMUsed)
+	}
+}
+
+func TestUsageIsTalliedForUnlimitedKeys(t *testing.T) {
+	l, _ := clocked()
+	k := key(1, nil, nil)
+
+	res, _ := l.Admit(k, 0)
+	res.Settle(500)
+
+	d := l.Peek(k)
+	if d.RPMUsed != 1 || d.TPMUsed != 500 {
+		t.Fatalf("usage = %d requests %d tokens, want 1 and 500", d.RPMUsed, d.TPMUsed)
+	}
+}
+
+func TestRefusedRequestsAreNotCountedAsUsage(t *testing.T) {
+	l, _ := clocked()
+	k := key(1, i(2), nil)
+
+	for n := 0; n < 5; n++ {
+		if res, d := l.Admit(k, 0); d.Allowed {
+			res.Settle(0)
+		}
+	}
+	if got := l.Peek(k).RPMUsed; got != 2 {
+		t.Fatalf("requests this minute = %d, want only the 2 that were admitted", got)
+	}
+}
+
 func TestSweepDropsIdleKeys(t *testing.T) {
 	l, advance := clocked()
 	a, b := key(1, i(10), nil), key(2, i(10), nil)

@@ -29,11 +29,15 @@ type keyDTO struct {
 	Live liveLimits `json:"live"`
 }
 
-// liveLimits is what is left in the key's buckets right now, which is what the
-// limits actually mean. Lifetime totals cannot express a per minute allowance.
+// liveLimits is what the key spent over the last minute alongside what is left
+// in its buckets. Lifetime totals cannot express a per minute allowance, and
+// the buckets alone cannot either: they refill within seconds, so a dashboard
+// reading only remaining would report an idle key moments after a burst.
 type liveLimits struct {
+	RPMUsed      int64 `json:"rpm_used"`
 	RPMRemaining int   `json:"rpm_remaining"`
 	RPMResetMS   int64 `json:"rpm_reset_ms"`
+	TPMUsed      int64 `json:"tpm_used"`
 	TPMRemaining int64 `json:"tpm_remaining"`
 	TPMResetMS   int64 `json:"tpm_reset_ms"`
 	InDebt       bool  `json:"in_debt"`
@@ -54,8 +58,10 @@ func (s *Server) toDTO(k *store.APIKey, now int64) keyDTO {
 		TotalPromptTokens:     k.TotalPromptTokens,
 		TotalCompletionTokens: k.TotalCompletionTokens,
 		Live: liveLimits{
+			RPMUsed:      d.RPMUsed,
 			RPMRemaining: d.RPMRemaining,
 			RPMResetMS:   d.RPMReset.Milliseconds(),
+			TPMUsed:      d.TPMUsed,
 			TPMRemaining: d.TPMRemaining,
 			TPMResetMS:   d.TPMReset.Milliseconds(),
 			InDebt:       d.InDebt,

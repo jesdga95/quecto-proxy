@@ -23,7 +23,7 @@ import FormField from "../components/molecules/FormField.astro";
         <tr>
           <th>Name</th>
           <th>Key</th>
-          <th>Limits</th>
+          <th>Per minute</th>
           <th>Expires</th>
           <th>Last used</th>
           <th>Status</th>
@@ -33,7 +33,7 @@ import FormField from "../components/molecules/FormField.astro";
       <tbody id="key-rows"></tbody>
     </table>
     <div id="keys-empty" hidden class="px-6 py-14 text-center">
-      <p class="text-[13px] font-[550] text-ink-2">No keys yet</p>
+      <p class="text-[13px] font-medium text-ink-2">No keys yet</p>
       <p class="mt-1 text-[12.5px] text-muted">
         Create one to start sending traffic through Quecto.
       </p>
@@ -134,26 +134,35 @@ import FormField from "../components/molecules/FormField.astro";
 
 <script>
   import { api, type Key } from "../lib/api";
-  import { ago, date, daysUntil, esc, count } from "../lib/format";
+  import { ago, date, daysUntil, esc, count, tokensTight } from "../lib/format";
 
   const el = (id: string) => document.getElementById(id)!;
   const modal = el("create-modal");
 
-  /** Shows what is left in the bucket right now, not lifetime totals. */
-  function meter(remaining: number, limit: number | null, unit: string): string {
+  /** Spent over the last minute, since that is what rpm and tpm measure. The
+      bucket only says whether the key is throttled right now. */
+  function meter(
+    used: number,
+    remaining: number,
+    limit: number | null,
+    unit: string,
+    fmt: (n: number) => string,
+  ): string {
     const name = `<span class="w-[26px] font-mono text-[10px] text-muted">${unit}</span>`;
+    const value = (text: string, tone = "text-ink-2") =>
+      `<span class="num w-[70px] shrink-0 text-right text-[10.5px] ${tone}">${text}</span>`;
+
     if (limit === null) {
       return `<div class="flex items-center gap-[7px]">${name}
-        <span class="text-[10.5px] text-muted">No limit</span>
+        <span class="flex-1 text-[10.5px] text-muted">No limit</span>
+        ${value(used === 0 ? "" : fmt(used))}
       </div>`;
     }
-    const used = Math.max(0, limit - remaining);
     const pct = Math.min(100, (used / limit) * 100);
     const tone = remaining <= 0 ? "crit" : pct >= 75 ? "warn" : "";
-    const value = remaining < 0 ? count(remaining) : `${count(remaining)}/${count(limit)}`;
     return `<div class="flex items-center gap-[7px]">${name}
       <span class="meter ${tone}"><span style="width:${pct.toFixed(0)}%"></span></span>
-      <span class="num w-[70px] shrink-0 text-right text-[10.5px] ${remaining < 0 ? "text-crit" : "text-ink-2"}">${value}</span>
+      ${value(`${fmt(used)}/${fmt(limit)}`, remaining <= 0 ? "text-crit" : "text-ink-2")}
     </div>`;
   }
 
@@ -180,14 +189,14 @@ import FormField from "../components/molecules/FormField.astro";
     const dim = k.status === "active" ? "" : "opacity-55";
     return `<tr class="${dim}" data-id="${k.id}">
       <td>
-        <div class="font-[550]">${esc(k.name)}</div>
+        <div class="font-medium">${esc(k.name)}</div>
         <div class="text-[11.5px] text-muted">Created ${esc(date(k.created_at))}</div>
       </td>
       <td><span class="mono-chip">${esc(k.key_prefix)}</span></td>
       <td>
         <div class="flex min-w-[132px] flex-col gap-[5px]">
-          ${meter(k.live.rpm_remaining, k.rpm_limit, "rpm")}
-          ${meter(k.live.tpm_remaining, k.tpm_limit, "tpm")}
+          ${meter(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "rpm", count)}
+          ${meter(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "tpm", tokensTight)}
           ${debtNote(k)}
         </div>
       </td>
