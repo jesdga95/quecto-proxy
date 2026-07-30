@@ -17,23 +17,71 @@ flowchart TD
 
 ## Run it
 
+Every `docker` command below needs `sudo` on a stock Linux engine, where the socket is root owned. Docker Desktop and rootless installs do not. If you see `permission denied ... /var/run/docker.sock`, add the `sudo`.
+
 ```bash
 git clone https://github.com/jesdga95/quecto-proxy && cd quecto-proxy
+
+# The admin password creates the account on first start and is then ignored.
+echo "QUECTO_ADMIN_PASSWORD=$(openssl rand -base64 24)" > .env
+cat .env   # save this, you cannot read it back later
+
+docker compose up -d --build
+docker compose logs quecto   # expect: msg=listening addr=:11312
+```
+
+Compose reads `.env` from the project directory rather than from your shell, so the password arrives intact even under `sudo`, which clears the environment. Edit `QUECTO_UPSTREAM_URL` in [docker-compose.yml](docker-compose.yml) if your model server is not on port 8080.
+
+Then open `http://localhost:11312/admin`, sign in, and create a key:
+
+```bash
+curl -sS http://localhost:11312/v1/chat/completions \
+  -H "Authorization: Bearer qp_your_key_here" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"local","messages":[{"role":"user","content":"hello"}]}'
+```
+
+Point any OpenAI client at `http://your-host:11312/v1`. Quecto speaks plain HTTP by design, so put TLS in front of it.
+
+### Without compose
+
+```bash
 docker build -t quecto .
 
 export QUECTO_ADMIN_PASSWORD=$(openssl rand -base64 24)
 echo "save this, it is only used once: $QUECTO_ADMIN_PASSWORD"
 
-docker run -d -p 11312:11312 -v quecto-data:/data \
+docker run -d --name quecto --restart unless-stopped \
+  -p 11312:11312 -v quecto-data:/data \
   -e QUECTO_UPSTREAM_URL=http://host.docker.internal:8080/v1 \
-  -e QUECTO_ADMIN_PASSWORD \
+  -e QUECTO_ADMIN_PASSWORD="$QUECTO_ADMIN_PASSWORD" \
   --add-host host.docker.internal:host-gateway \
   quecto
 ```
 
+`--restart unless-stopped` is what makes it survive a reboot. On Linux the engine has to come up too: `sudo systemctl enable --now docker`.
+
+Write the password as `-e VAR="$VAR"` and not as a bare `-e VAR`. The bare form copies the value from Docker's own environment, which `sudo` clears, so under `sudo docker run` it passes nothing and the container exits 1 with `no admin password is set`.
+
 `--add-host` is what makes `host.docker.internal` resolve on Linux, where it is not built in. It is how the container reaches a model server running on the host.
 
-Open `http://localhost:11312/admin`, create a key, then point any OpenAI client at `http://your-host:11312/v1`. Quecto speaks plain HTTP by design, so put TLS in front of it.
+### When it does not come up
+
+The container prints its reason and exits, so a start that vanishes from `docker ps` is always visible in the logs:
+
+```bash
+docker logs quecto
+```
+
+| What you see | What it means |
+|---|---|
+| `no admin password is set` | `QUECTO_ADMIN_PASSWORD` never reached the container, see the `-e` note above |
+| `QUECTO_UPSTREAM_URL is required` | Missing or empty, it has no default |
+| `permission denied ... /var/run/docker.sock` | Docker itself, not Quecto. Use `sudo`, or add yourself to the `docker` group |
+| 401 on a request | Key is wrong, expired, or revoked. The body says which |
+| Connection error on a request | Quecto cannot reach the upstream. Check `QUECTO_UPSTREAM_URL` and that the model server is listening |
+
+The password is only consumed when no admin account exists yet. Once one is stored in the volume, changing the variable does nothing, so reset it from the dashboard instead.
 
 ## Configuration
 
