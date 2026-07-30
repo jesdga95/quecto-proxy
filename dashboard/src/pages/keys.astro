@@ -151,7 +151,8 @@ import FormField from "../components/molecules/FormField.astro";
   };
   const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
 
-  /** Spent over the last minute, since that is what RPM and TPM measure. */
+  /** How much of the allowance is spent, which is what the limiter enforces.
+   * Remaining goes negative on a key in debt, so it is clamped to read as full. */
   function usage(
     used: number,
     remaining: number,
@@ -159,7 +160,10 @@ import FormField from "../components/molecules/FormField.astro";
     unit: string,
     fmt: (n: number) => string,
   ): string {
-    const spent = limit === null ? `${fmt(used)}/∞` : `${fmt(used)}/${fmt(limit)}`;
+    const spent =
+      limit === null
+        ? `${fmt(used)}/∞`
+        : `${fmt(limit - Math.max(0, Math.min(limit, remaining)))}/${fmt(limit)}`;
     const tone = limit !== null && remaining <= 0 ? "text-crit" : "text-ink-2";
     return `<span class="whitespace-nowrap">
       <span class="num text-[11.5px] ${tone}">${spent}</span>

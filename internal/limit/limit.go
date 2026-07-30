@@ -159,7 +159,8 @@ func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 		max := float64(*s.tpmLimit)
 		s.tpm.refill(now, max)
 		d.TPMRemaining = int64(s.tpm.balance)
-		d.InDebt = s.tpm.balance < 0
+		// A balance of exactly zero is refused too, so it counts as limited.
+		d.InDebt = s.tpm.balance <= 0
 		d.TPMReset = s.tpm.until(1, max)
 	}
 }
