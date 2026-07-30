@@ -336,6 +336,38 @@ func TestGenuineBadRequestIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestUpstream429GetsARetryAfterHint(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.ForceStatus = http.StatusTooManyRequests
+	r := newRig(t, opts)
+
+	resp := r.post("/v1/chat/completions", `{"model":"m"}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want the upstream 429 to reach the caller", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "1" {
+		t.Errorf("Retry-After = %q, want 1", got)
+	}
+}
+
+func TestUpstreamRetryAfterIsPreserved(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.ForceStatus = http.StatusTooManyRequests
+	opts.ForceHeaders = map[string]string{"Retry-After": "17"}
+	r := newRig(t, opts)
+
+	resp := r.post("/v1/chat/completions", `{"model":"m"}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if got := resp.Header.Get("Retry-After"); got != "17" {
+		t.Errorf("Retry-After = %q, want the upstream's own 17", got)
+	}
+}
+
 // materialise applies the planned injection so the result can be asserted on.
 func materialise(body []byte) ([]byte, bool) {
 	at, needComma, ok := planInjection(body)

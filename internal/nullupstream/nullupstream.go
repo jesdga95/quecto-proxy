@@ -26,9 +26,11 @@ type Options struct {
 	// which is how some strict servers behave.
 	SupportsStreamOptions bool
 
-	// Forces a status code for every request when non-zero.
-	ForceStatus int
-	Model       string
+	// Forces a status code for every request when non-zero,
+	// with any of these headers attached.
+	ForceStatus  int
+	ForceHeaders map[string]string
+	Model        string
 }
 
 func DefaultOptions() Options {
@@ -116,6 +118,9 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	opts := u.options()
 
 	if opts.ForceStatus != 0 {
+		for k, v := range opts.ForceHeaders {
+			w.Header().Set(k, v)
+		}
 		writeError(w, opts.ForceStatus, "forced by the test fixture")
 		return
 	}

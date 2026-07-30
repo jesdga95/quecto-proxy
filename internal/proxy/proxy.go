@@ -192,6 +192,11 @@ func (p *Proxy) retryWithoutInjection(w http.ResponseWriter, r *http.Request, st
 }
 
 func (p *Proxy) modifyResponse(resp *http.Response) error {
+	// Give client backoff logic a hint when the upstream throttles without one.
+	if resp.StatusCode == http.StatusTooManyRequests && resp.Header.Get("Retry-After") == "" {
+		resp.Header.Set("Retry-After", "1")
+	}
+
 	st, ok := resp.Request.Context().Value(ctxKeyState).(*state)
 	if !ok {
 		return nil
