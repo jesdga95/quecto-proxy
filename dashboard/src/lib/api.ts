@@ -56,7 +56,6 @@ export interface Stats {
     | {
         key_id: number;
         key_name: string;
-        model: string;
         requests: number;
         tokens: number;
       }[]

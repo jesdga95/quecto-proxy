@@ -55,7 +55,6 @@ import StatTile from "../components/molecules/StatTile.astro";
         <thead>
           <tr>
             <th>Key</th>
-            <th>Model</th>
             <th class="right">Requests</th>
             <th class="right">Tokens</th>
           </tr>
@@ -188,7 +187,6 @@ import StatTile from "../components/molecules/StatTile.astro";
       .map(
         (k) => `<tr>
           <td class="font-medium">${esc(k.key_name || "Deleted key")}</td>
-          <td>${k.model ? `<span class="mono-chip">${esc(k.model)}</span>` : ""}</td>
           <td class="right num">${count(k.requests)}</td>
           <td class="right num">${tokensFlat(k.tokens)}</td>
         </tr>`,

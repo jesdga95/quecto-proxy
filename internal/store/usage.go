@@ -291,7 +291,6 @@ type Bucket struct {
 type KeyTotal struct {
 	KeyID    int64  `json:"key_id"`
 	KeyName  string `json:"key_name"`
-	Model    string `json:"model"`
 	Requests int64  `json:"requests"`
 	Tokens   int64  `json:"tokens"`
 }
@@ -331,12 +330,14 @@ func (s *Store) Series(from, to int64) ([]Bucket, error) {
 	return out, rows.Err()
 }
 
+// TopKeys ranks keys, not key and model pairs, so a key that serves more than
+// one model is still a single row.
 func (s *Store) TopKeys(from, to int64, limit int) ([]KeyTotal, error) {
-	rows, err := s.DB.Query(`SELECT u.key_id, COALESCE(k.name, ''), u.model,
+	rows, err := s.DB.Query(`SELECT u.key_id, COALESCE(k.name, ''),
 		SUM(u.requests), SUM(u.prompt_tokens) + SUM(u.completion_tokens) AS tokens
 		FROM usage_hourly u LEFT JOIN api_keys k ON k.id = u.key_id
 		WHERE u.bucket >= ? AND u.bucket <= ?
-		GROUP BY u.key_id, u.model ORDER BY tokens DESC LIMIT ?`, from, to, limit)
+		GROUP BY u.key_id ORDER BY tokens DESC LIMIT ?`, from, to, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read top keys: %w", err)
 	}
@@ -345,7 +346,7 @@ func (s *Store) TopKeys(from, to int64, limit int) ([]KeyTotal, error) {
 	var out []KeyTotal
 	for rows.Next() {
 		var k KeyTotal
-		if err := rows.Scan(&k.KeyID, &k.KeyName, &k.Model, &k.Requests, &k.Tokens); err != nil {
+		if err := rows.Scan(&k.KeyID, &k.KeyName, &k.Requests, &k.Tokens); err != nil {
 			return nil, fmt.Errorf("read top keys: %w", err)
 		}
 		out = append(out, k)
