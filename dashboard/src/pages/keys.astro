@@ -11,14 +11,15 @@ import FormField from "../components/molecules/FormField.astro";
     <div>
       <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">API keys</h1>
       <p class="text-[13px] text-muted">
-        Each key carries its own expiration and rate limits.
+        Each key carries its own expiration and rate limits. A key is shown in
+        full only once, at creation.
       </p>
     </div>
     <Button id="open-create"><Icon name="plus" class="size-[15px]" />Create key</Button>
   </div>
 
   <div class="card overflow-x-auto">
-    <table>
+    <table class="key-table">
       <thead>
         <tr>
           <th>Name</th>
@@ -26,7 +27,6 @@ import FormField from "../components/molecules/FormField.astro";
           <th>Per minute</th>
           <th>Expires</th>
           <th>Last used</th>
-          <th>Status</th>
           <th></th>
         </tr>
       </thead>
@@ -38,6 +38,13 @@ import FormField from "../components/molecules/FormField.astro";
         Create one to start sending traffic through Quecto.
       </p>
     </div>
+  </div>
+
+  <!-- Read by the row renderer, since rows are built after the build step that
+       inlines these. -->
+  <div hidden>
+    <span id="icon-revoke"><Icon name="prohibit" /></span>
+    <span id="icon-delete"><Icon name="trash" /></span>
   </div>
 </Dashboard>
 
@@ -70,7 +77,7 @@ import FormField from "../components/molecules/FormField.astro";
         </select>
       </FormField>
 
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
         <FormField label="Requests per minute" for="k-rpm">
           <input class="input num" id="k-rpm" inputmode="numeric" value="60" />
         </FormField>
@@ -138,79 +145,96 @@ import FormField from "../components/molecules/FormField.astro";
 
   const el = (id: string) => document.getElementById(id)!;
   const modal = el("create-modal");
+  const ICON = {
+    revoke: el("icon-revoke").innerHTML,
+    delete: el("icon-delete").innerHTML,
+  };
+  const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
 
-  /** Spent over the last minute, since that is what rpm and tpm measure. The
-      bucket only says whether the key is throttled right now. */
-  function meter(
+  /** Spent over the last minute, since that is what RPM and TPM measure. */
+  function usage(
     used: number,
     remaining: number,
     limit: number | null,
     unit: string,
     fmt: (n: number) => string,
   ): string {
-    const name = `<span class="w-[26px] font-mono text-[10px] text-muted">${unit}</span>`;
-    const value = (text: string, tone = "text-ink-2") =>
-      `<span class="num w-[70px] shrink-0 text-right text-[10.5px] ${tone}">${text}</span>`;
-
-    if (limit === null) {
-      return `<div class="flex items-center gap-[7px]">${name}
-        <span class="flex-1 text-[10.5px] text-muted">No limit</span>
-        ${value(used === 0 ? "" : fmt(used))}
-      </div>`;
-    }
-    const pct = Math.min(100, (used / limit) * 100);
-    const tone = remaining <= 0 ? "crit" : pct >= 75 ? "warn" : "";
-    return `<div class="flex items-center gap-[7px]">${name}
-      <span class="meter ${tone}"><span style="width:${pct.toFixed(0)}%"></span></span>
-      ${value(`${fmt(used)}/${fmt(limit)}`, remaining <= 0 ? "text-crit" : "text-ink-2")}
-    </div>`;
+    const spent = limit === null ? `${fmt(used)}/∞` : `${fmt(used)}/${fmt(limit)}`;
+    const tone = limit !== null && remaining <= 0 ? "text-crit" : "text-ink-2";
+    return `<span class="whitespace-nowrap">
+      <span class="num text-[11.5px] ${tone}">${spent}</span>
+      <span class="font-mono text-[10px] tracking-[0.04em] text-muted">${unit}</span>
+    </span>`;
   }
 
-  function debtNote(k: Key): string {
-    if (!k.live.in_debt) return "";
-    const secs = Math.max(1, Math.round(k.live.tpm_reset_ms / 1000));
-    return `<div class="flex items-center gap-1 font-mono text-[10.5px] text-crit">
-      In debt, clears in ${secs}s
-    </div>`;
+  function perMinute(k: Key): string {
+    if (k.rpm_limit === null && k.tpm_limit === null) {
+      return `<span class="text-[12px] text-muted">No limit</span>`;
+    }
+    return (
+      usage(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "RPM", count) +
+      `<span class="text-[11px] text-line-strong">·</span>` +
+      usage(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "TPM", tokensTight)
+    );
   }
 
-  function statusPill(k: Key): string {
-    if (k.status === "revoked") return `<span class="pill pill-mute">Revoked</span>`;
-    if (k.status === "expired") return `<span class="pill pill-mute">Expired</span>`;
-    if (k.live.in_debt) return `<span class="pill pill-crit">Rate limited</span>`;
-    if (k.expires_at) {
-      const d = daysUntil(k.expires_at);
-      if (d <= 7) return `<span class="pill pill-warn">Expires in ${d}d</span>`;
-    }
-    return `<span class="pill pill-ok">Active</span>`;
+  /** Colour carries the state, so the word goes to the tooltip and to readers. */
+  function statusDot(k: Key): string {
+    const label =
+      k.status === "active" && k.live.in_debt ? "Rate limited" : STATUS[k.status];
+    const tone =
+      k.status !== "active" ? "bg-muted" : k.live.in_debt ? "bg-crit" : "bg-ok";
+    return `<span class="size-[7px] shrink-0 rounded-full ${tone}" title="${label}"></span>
+      <span class="sr-only">${label}</span>`;
+  }
+
+  /** Tinted while an active key is within a week of lapsing. */
+  function expiry(k: Key): string {
+    if (!k.expires_at) return `<span class="text-muted">Never</span>`;
+    const soon = k.status === "active" && daysUntil(k.expires_at) <= 7;
+    return `<span class="${soon ? "text-warn" : "text-muted"}">${esc(date(k.expires_at))}</span>`;
+  }
+
+  function actions(k: Key): string {
+    const revoke =
+      k.status !== "active"
+        ? ""
+        : `<button class="icon-btn icon-btn-outline" data-revoke="${k.id}"
+             title="Revoke" aria-label="Revoke ${esc(k.name)}">${ICON.revoke}</button>`;
+    return `<td class="key-actions right">
+      <div class="flex justify-end gap-1.5">${revoke}
+        <button class="icon-btn icon-btn-outline icon-btn-danger" data-delete="${k.id}"
+          title="Delete" aria-label="Delete ${esc(k.name)}">${ICON.delete}</button>
+      </div>
+    </td>`;
   }
 
   function row(k: Key): string {
-    const dim = k.status === "active" ? "" : "opacity-55";
-    return `<tr class="${dim}" data-id="${k.id}">
+    return `<tr class="${k.status === "active" ? "" : "opacity-60"}" data-id="${k.id}">
       <td>
-        <div class="font-medium">${esc(k.name)}</div>
-        <div class="text-[11.5px] text-muted">Created ${esc(date(k.created_at))}</div>
-      </td>
-      <td><span class="mono-chip">${esc(k.key_prefix)}</span></td>
-      <td>
-        <div class="flex min-w-[132px] flex-col gap-[5px]">
-          ${meter(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "rpm", count)}
-          ${meter(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "tpm", tokensTight)}
-          ${debtNote(k)}
+        <div class="flex items-center gap-2.5">
+          ${statusDot(k)}
+          <span
+            class="max-w-[240px] truncate font-medium"
+            title="Created ${esc(date(k.created_at))}"
+          >${esc(k.name)}</span>
         </div>
       </td>
-      <td class="text-[11.5px] text-muted">${k.expires_at ? esc(date(k.expires_at)) : "Never"}</td>
-      <td class="text-[11.5px] text-muted">${esc(ago(k.last_used_at))}</td>
-      <td>${statusPill(k)}</td>
-      <td class="right whitespace-nowrap">
-        ${
-          k.status === "active"
-            ? `<button class="btn btn-ghost btn-sm" data-revoke="${k.id}">Revoke</button>`
-            : ""
-        }
-        <button class="btn btn-ghost btn-sm" data-delete="${k.id}">Delete</button>
+      <td>
+        <span class="key-label">Key</span>
+        <span class="mono-chip whitespace-nowrap">${esc(k.key_prefix)}</span>
       </td>
+      <td>
+        <div class="flex flex-wrap items-baseline gap-x-1.5">
+          <span class="key-label">Per minute</span>${perMinute(k)}
+        </div>
+      </td>
+      <td class="text-[12px]"><span class="key-label">Expires</span>${expiry(k)}</td>
+      <td class="text-[12px]">
+        <span class="key-label">Last used</span>
+        <span class="text-muted">${esc(ago(k.last_used_at))}</span>
+      </td>
+      ${actions(k)}
     </tr>`;
   }
 
@@ -256,13 +280,19 @@ import FormField from "../components/molecules/FormField.astro";
   }
 
   el("open-create").addEventListener("click", openModal);
+
+  /** Only the close and cancel controls dismiss the dialog. A click that lands
+      on the backdrop is usually a selection that drifted out of a field. */
   modal.addEventListener("click", (e) => {
-    if (e.target === modal || (e.target as HTMLElement).closest("[data-close]")) {
+    if ((e.target as HTMLElement).closest("[data-close]")) closeModal();
+  });
+
+  // Escape backs out of the form only. Once the key is on screen it is shown
+  // for the last time, so leaving takes the acknowledged Done button.
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden && !el("step-form").hidden) {
       closeModal();
     }
-  });
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !modal.hidden) closeModal();
   });
 
   function limitValue(id: string): number | null {

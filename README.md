@@ -1,3 +1,5 @@
+<img src="dashboard/public/favicon.svg" alt="" width="76" height="76">
+
 # Quecto
 
 A tiny proxy for safely exposing a self-hosted OpenAI-compatible LLM server to the internet. API keys with expiration, per-key limits on **requests and tokens**, and metadata-only usage logs, behind a small dashboard.

@@ -4,19 +4,23 @@ import StatTile from "../components/molecules/StatTile.astro";
 ---
 
 <Dashboard title="Overview" current="overview">
-  <div class="mb-[22px] flex items-start justify-between gap-6">
+  <div
+    class="mb-[22px] flex items-start justify-between gap-6 max-md:flex-col max-md:gap-3"
+  >
     <div>
       <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">Overview</h1>
       <p id="page-sub" class="text-[13px] text-muted">Last 24 hours.</p>
     </div>
-    <select id="range" class="select w-auto">
+    <select id="range" class="select w-auto max-md:w-full">
       <option value="24h" selected>Last 24 hours</option>
       <option value="7d">Last 7 days</option>
       <option value="30d">Last 30 days</option>
     </select>
   </div>
 
-  <div class="grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-3">
+  <div
+    class="grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-3 max-md:grid-cols-2 max-md:[&>:last-child]:col-span-2"
+  >
     <StatTile label="Requests" id="stat-requests" footId="stat-requests-foot" />
     <StatTile label="Tokens" id="stat-tokens" footId="stat-tokens-foot" />
     <StatTile label="p95 TTFT" id="stat-ttft" foot="upstream, not proxy" />
@@ -30,10 +34,10 @@ import StatTile from "../components/molecules/StatTile.astro";
   </div>
 
   <section class="mt-[30px]">
-    <div class="card px-[18px] pt-4 pb-3">
-      <div class="mb-3.5 flex items-baseline justify-between">
+    <div class="card px-[18px] pt-4 pb-3 max-md:px-3">
+      <div class="mb-3.5 flex items-baseline gap-2">
         <span class="text-[13px] font-medium">Requests over time</span>
-        <span id="chart-peak" class="num text-[11.5px] text-muted"></span>
+        <span id="chart-peak" class="text-[11.5px] text-muted"></span>
       </div>
       <div id="chart" class="h-32"></div>
       <div
@@ -132,8 +136,11 @@ import StatTile from "../components/molecules/StatTile.astro";
     el("chart").innerHTML = svg + "</svg>";
 
     const peak = series.reduce((a, b) => (b.requests > a.requests ? b : a));
-    el("chart-peak").textContent =
-      peak.requests === 0 ? "" : `peak ${count(peak.requests)}`;
+    el("chart-peak").innerHTML =
+      peak.requests === 0
+        ? ""
+        : `<span class="text-line-strong">|</span>
+           <span class="num text-ink-2">${count(peak.requests)}</span> peak`;
 
     const fmt = (u: number) =>
       new Date(u * 1000).toLocaleString("en-GB", {

@@ -36,10 +36,8 @@ type keyDTO struct {
 type liveLimits struct {
 	RPMUsed      int64 `json:"rpm_used"`
 	RPMRemaining int   `json:"rpm_remaining"`
-	RPMResetMS   int64 `json:"rpm_reset_ms"`
 	TPMUsed      int64 `json:"tpm_used"`
 	TPMRemaining int64 `json:"tpm_remaining"`
-	TPMResetMS   int64 `json:"tpm_reset_ms"`
 	InDebt       bool  `json:"in_debt"`
 }
 
@@ -60,10 +58,8 @@ func (s *Server) toDTO(k *store.APIKey, now int64) keyDTO {
 		Live: liveLimits{
 			RPMUsed:      d.RPMUsed,
 			RPMRemaining: d.RPMRemaining,
-			RPMResetMS:   d.RPMReset.Milliseconds(),
 			TPMUsed:      d.TPMUsed,
 			TPMRemaining: d.TPMRemaining,
-			TPMResetMS:   d.TPMReset.Milliseconds(),
 			InDebt:       d.InDebt,
 		},
 	}

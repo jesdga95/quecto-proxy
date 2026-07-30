@@ -1,28 +1,26 @@
 ---
-interface Props {
+import type { HTMLAttributes } from "astro/types";
+
+// Anything else a button takes, data attributes included, passes straight
+// through: callers reach for aria-label and data-close on these.
+interface Props extends HTMLAttributes<"button"> {
   variant?: "primary" | "ghost";
   size?: "md" | "sm";
-  type?: "button" | "submit";
-  id?: string;
-  class?: string;
-  disabled?: boolean;
 }
 
 const {
   variant = "primary",
   size = "md",
   type = "button",
-  id,
   class: cls = "",
-  disabled,
+  ...rest
 } = Astro.props;
 ---
 
 <button
   type={type}
-  id={id}
-  disabled={disabled}
   class:list={["btn", `btn-${variant}`, size === "sm" && "btn-sm", cls]}
+  {...rest}
 >
   <slot />
 </button>

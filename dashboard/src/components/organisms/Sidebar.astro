@@ -13,21 +13,32 @@ const nav = [
 ---
 
 <aside
-  class="sticky top-0 flex h-screen flex-col border-r border-line bg-surface max-md:static max-md:h-auto"
+  class="sticky top-0 z-30 flex h-screen flex-col border-r border-line bg-surface max-md:h-auto max-md:border-r-0 max-md:border-b"
 >
-  <div class="flex items-baseline gap-2 px-[18px] pt-5 pb-[18px]">
+  <div
+    class="flex items-baseline gap-2 px-[18px] pt-5 pb-[18px] max-md:px-4 max-md:py-2.5"
+  >
     <span class="font-mono text-[15px] font-semibold tracking-[0.08em]">QUECTO</span>
     <span class="font-mono text-[10px] tracking-[0.04em] text-muted">10⁻³⁰</span>
+
+    <!-- The footer below sits past the end of a phone page, so sign out travels
+         with the brand instead. -->
+    <button data-sign-out class="icon-btn -mr-1 ml-auto hidden max-md:grid" aria-label="Sign out">
+      <Icon name="sign-out" class="size-[17px]" />
+    </button>
   </div>
 
-  <nav class="flex flex-col gap-0.5 px-2.5" aria-label="Primary">
+  <nav
+    class="flex flex-col gap-0.5 px-2.5 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:px-3 max-md:pb-2.5"
+    aria-label="Primary"
+  >
     {
       nav.map((item) => (
         <a
           href={item.href}
           aria-current={current === item.id ? "page" : undefined}
           class:list={[
-            "flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] transition-colors",
+            "flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] transition-colors max-md:shrink-0 max-md:gap-2 max-md:whitespace-nowrap",
             current === item.id
               ? "bg-accent-bg font-medium text-accent"
               : "text-ink-2 hover:bg-surface-2 hover:text-ink",
@@ -44,24 +55,9 @@ const nav = [
   </nav>
 
   <div class="mt-auto border-t border-line px-2.5 py-3 max-md:hidden">
-    <div
-      class="flex items-center gap-2 rounded-md border border-line bg-bg px-2.5 py-2"
-    >
-      <span id="upstream-dot" class="size-1.5 shrink-0 rounded-full bg-muted"></span>
-      <div class="min-w-0">
-        <div id="upstream-label" class="text-[11px] leading-snug text-muted">
-          Checking upstream
-        </div>
-        <div
-          id="upstream-host"
-          class="truncate font-mono text-[11.5px] text-ink-2"
-        >
-        </div>
-      </div>
-    </div>
     <button
-      id="sign-out"
-      class="mt-1.5 flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13.5px] text-ink-2 hover:bg-surface-2 hover:text-ink"
+      data-sign-out
+      class="flex w-full items-center gap-2.5 rounded-md px-2.5 py-[7px] text-left text-[13.5px] text-ink-2 hover:bg-surface-2 hover:text-ink"
     >
       <Icon name="sign-out" class="size-[17px] shrink-0" />
       Sign out

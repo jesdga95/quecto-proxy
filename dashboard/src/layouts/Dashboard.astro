@@ -19,10 +19,12 @@ const { title, current } = Astro.props;
     <title>{title} · Quecto</title>
   </head>
   <body class="m-0">
-    <div class="grid min-h-screen grid-cols-[240px_1fr] max-md:grid-cols-1">
+    <!-- Two columns become two blocks, which also lets the bar at the top of a
+         phone stick to the viewport rather than to its grid row. -->
+    <div class="grid min-h-screen grid-cols-[240px_1fr] max-md:block">
       <Sidebar current={current} />
       <main class="min-w-0">
-        <div class="max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4">
+        <div class="max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4 max-md:pt-5 max-md:pb-10">
           <slot />
         </div>
       </main>
@@ -31,37 +33,23 @@ const { title, current } = Astro.props;
     <script>
       import { api } from "../lib/api";
 
-      const dot = document.getElementById("upstream-dot");
-      const label = document.getElementById("upstream-label");
-      const host = document.getElementById("upstream-host");
+      // Cheaper than the health endpoint, which probes the model server.
       const count = document.getElementById("nav-key-count");
+      if (count) {
+        api
+          .me()
+          .then((me) => (count.textContent = String(me.key_count)))
+          .catch(() => {});
+      }
 
-      api
-        .health()
-        .then((h) => {
-          if (count) count.textContent = String(h.key_count);
-          if (host) {
-            try {
-              host.textContent = new URL(h.upstream).host;
-            } catch {
-              host.textContent = h.upstream;
-            }
-          }
-          if (dot)
-            dot.style.background = h.upstream_ok ? "var(--ok)" : "var(--crit)";
-          if (label)
-            label.textContent = h.upstream_ok
-              ? "Upstream healthy"
-              : "Upstream unreachable";
-        })
-        .catch(() => {
-          if (label) label.textContent = "Status unavailable";
+      // Sign out appears twice, once in the sidebar footer and once beside the
+      // brand where a phone can reach it.
+      for (const button of document.querySelectorAll("[data-sign-out]")) {
+        button.addEventListener("click", async () => {
+          await api.logout().catch(() => {});
+          window.location.href = "/admin/login";
         });
-
-      document.getElementById("sign-out")?.addEventListener("click", async () => {
-        await api.logout().catch(() => {});
-        window.location.href = "/admin/login";
-      });
+      }
     </script>
   </body>
 </html>

@@ -11,18 +11,28 @@ import Button from "../components/atoms/Button.astro";
     </p>
   </div>
 
+  <!-- Two filters to a row on a phone, rather than three squeezed into one. -->
   <div class="mb-3 flex flex-wrap gap-2">
-    <select id="f-key" class="select w-auto min-w-[132px]">
+    <select
+      id="f-key"
+      class="select w-auto min-w-[132px] max-md:min-w-0 max-md:flex-1 max-md:basis-[calc(50%-4px)]"
+    >
       <option value="">All keys</option>
     </select>
-    <select id="f-status" class="select w-auto min-w-[132px]">
+    <select
+      id="f-status"
+      class="select w-auto min-w-[132px] max-md:min-w-0 max-md:flex-1 max-md:basis-[calc(50%-4px)]"
+    >
       <option value="">All statuses</option>
       <option value="success">Success</option>
       <option value="rate_limited">Rate limited</option>
       <option value="client_error">Client errors</option>
       <option value="server_error">Server errors</option>
     </select>
-    <select id="f-range" class="select w-auto min-w-[132px]">
+    <select
+      id="f-range"
+      class="select w-auto min-w-[132px] max-md:min-w-0 max-md:flex-1 max-md:basis-[calc(50%-4px)]"
+    >
       <option value="24">Last 24 hours</option>
       <option value="168">Last 7 days</option>
       <option value="720">Last 30 days</option>

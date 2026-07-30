@@ -189,6 +189,7 @@
     background: none;
     color: var(--muted);
     cursor: pointer;
+    transition: background 90ms ease, color 90ms ease, border-color 90ms ease;
   }
   .icon-btn:hover {
     background: var(--surface-2);
@@ -197,6 +198,19 @@
   .icon-btn svg {
     width: 15px;
     height: 15px;
+  }
+  /* Outlined so a row action reads as a control before it is hovered. */
+  .icon-btn-outline {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    border-color: var(--border-2);
+    color: var(--text-2);
+  }
+  .icon-btn-danger:hover {
+    background: none;
+    border-color: var(--crit);
+    color: var(--crit);
   }
 
   .input,
@@ -314,24 +328,61 @@
     text-align: right;
   }
 
-  .meter {
-    height: 4px;
-    flex: 1;
-    background: var(--surface-2);
-    border-radius: 2px;
-    overflow: hidden;
-    min-width: 44px;
+  .key-table td {
+    white-space: nowrap;
   }
-  .meter > span {
-    display: block;
-    height: 100%;
-    background: var(--accent);
-    border-radius: 2px;
+  /* Stands in for the column heading once a key row has stacked. */
+  .key-label {
+    display: none;
   }
-  .meter.warn > span {
-    background: var(--warn);
-  }
-  .meter.crit > span {
-    background: var(--crit);
+
+  @media (max-width: 767px) {
+    /* Tables keep their columns and scroll sideways inside their card, so the
+       cells give back what padding they can. */
+    thead th,
+    tbody td {
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    /* Six columns of key will not fit a phone, so each row stops being a row
+       and stacks, labelling its own cells now that the heading is gone. */
+    .key-table,
+    .key-table tbody {
+      display: block;
+    }
+    .key-table thead {
+      display: none;
+    }
+    .key-table tbody tr {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      row-gap: 5px;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .key-table tbody tr:last-child {
+      border-bottom: 0;
+    }
+    .key-table tbody td {
+      display: block;
+      grid-column: 1;
+      padding: 0;
+      border: 0;
+      white-space: normal;
+    }
+    .key-table td.key-actions {
+      grid-row: 1;
+      grid-column: 2;
+    }
+    .key-label {
+      display: inline;
+      margin-right: 6px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
   }
 }
