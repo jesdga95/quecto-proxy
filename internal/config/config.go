@@ -3,6 +3,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -10,12 +11,24 @@ import (
 	"time"
 )
 
-// defaultListen is "qp" in ASCII decimal, 113 and 112, which keeps Quecto
-// clear of 8080 where llama.cpp and LocalAI usually sit.
-const defaultListen = ":11312"
+const (
+	// defaultListen is "qp" in ASCII decimal, 113 and 112, which keeps Quecto
+	// clear of 8080 where llama.cpp and LocalAI usually sit.
+	defaultListen = ":11312"
+
+	// The dashboard sits on the next port up, reachable wherever the proxy is,
+	// so that what publishes it is a tunnel or a reverse proxy naming the port
+	// rather than anything Quecto decides on its own.
+	defaultAdminListen = ":11313"
+)
 
 type Config struct {
 	Listen string
+
+	// Where the dashboard and its API listen, on a port of their own so that
+	// exposing the proxy port exposes only the proxy. Naming the same address
+	// as Listen puts them back on a single port.
+	AdminListen string
 
 	UpstreamURL           *url.URL
 	UpstreamAPIKey        string
@@ -37,6 +50,7 @@ type Config struct {
 func Load() (*Config, error) {
 	c := &Config{
 		Listen:                envStr("QUECTO_LISTEN", defaultListen),
+		AdminListen:           envStr("QUECTO_ADMIN_LISTEN", defaultAdminListen),
 		UpstreamAPIKey:        envStr("QUECTO_UPSTREAM_API_KEY", ""),
 		DBPath:                envStr("QUECTO_DB_PATH", "./quecto.db"),
 		AdminPassword:         envStr("QUECTO_ADMIN_PASSWORD", ""),
@@ -65,6 +79,14 @@ func Load() (*Config, error) {
 	u.Path = strings.TrimSuffix(u.Path, "/")
 	c.UpstreamURL = u
 
+	// An exact match is the way to ask for one listener. Anything else that
+	// wants the same socket would fail the second bind with nothing to explain it.
+	if c.AdminListen != c.Listen && portsCollide(c.AdminListen, c.Listen) {
+		return nil, fmt.Errorf("QUECTO_ADMIN_LISTEN %q and QUECTO_LISTEN %q cannot both bind that port. "+
+			"Give the dashboard a port of its own, or name the same address for both to serve them from one listener",
+			c.AdminListen, c.Listen)
+	}
+
 	if c.LogRetentionDays < 1 {
 		return nil, fmt.Errorf("QUECTO_LOG_RETENTION_DAYS must be at least 1, got %d", c.LogRetentionDays)
 	}
@@ -75,6 +97,33 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("QUECTO_DEFAULT_MAX_TOKENS must be positive, got %d", c.DefaultMaxTokens)
 	}
 	return c, nil
+}
+
+// portsCollide reports whether two listen addresses would contend for one
+// socket. A wildcard host already covers every address the other one names.
+func portsCollide(a, b string) bool {
+	ah, ap, err := net.SplitHostPort(a)
+	if err != nil {
+		return false
+	}
+	bh, bp, err := net.SplitHostPort(b)
+	if err != nil {
+		return false
+	}
+	if ap != bp {
+		return false
+	}
+	ah, bh = anyHost(ah), anyHost(bh)
+	return ah == bh || ah == "" || bh == ""
+}
+
+// anyHost folds every spelling of "every interface" onto one.
+func anyHost(host string) string {
+	switch host {
+	case "0.0.0.0", "::", "[::]":
+		return ""
+	}
+	return host
 }
 
 func envStr(key, def string) string {

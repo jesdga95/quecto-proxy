@@ -14,10 +14,14 @@ flowchart TD
   E["TLS<br/>Cloudflare, Caddy, Traefik"]
   Q["Quecto :11312<br/>authenticate, rate limit<br/>count tokens, log metadata"]
   M["Model server<br/>llama.cpp, vLLM, Ollama"]
+  A["Dashboard :11313<br/>same process, own port<br/>keys, usage, settings"]
 
   C -->|"https, bearer qp_..."| E -->|http| Q -->|http| M
   M -.->|"tokens counted on the way back"| Q
+  A -.- Q
 ```
+
+The dashboard listens on a port of its own, so a tunnel or a reverse proxy pointed at `:11312` carries the API and nothing else.
 
 ## Run it
 
@@ -34,9 +38,11 @@ docker compose up -d --build
 docker compose logs quecto   # expect: msg=listening addr=:11312
 ```
 
+The line after it reports the dashboard on `:11313`.
+
 Compose reads `.env` from the project directory rather than from your shell, so the password arrives intact even under `sudo`, which clears the environment. Edit `QUECTO_UPSTREAM_URL` in [docker-compose.yml](docker-compose.yml) if your model server is not on port 8080.
 
-Then open `http://localhost:11312/admin`, sign in, and create a key:
+Then open `http://localhost:11313/admin`, sign in, and create a key:
 
 ```bash
 curl -sS http://localhost:11312/v1/chat/completions \
@@ -47,6 +53,35 @@ curl -sS http://localhost:11312/v1/chat/completions \
 
 Point any OpenAI client at `http://your-host:11312/v1`. Quecto speaks plain HTTP by design, so put TLS in front of it.
 
+### Two ports, and what to expose
+
+Both ports listen the same way, so `http://your-host:11312/v1` and `http://your-host:11313/admin` are equally reachable on your own network. The split is there so that whatever fronts Quecto can carry one without the other. The proxy port answers 404 for every `/admin` URL, so naming `:11312` is enough:
+
+```yaml
+# cloudflared, exposing the API and nothing else
+ingress:
+  - hostname: llm.example.com
+    service: http://localhost:11312
+  - service: http_status:404
+```
+
+That matters because nothing rate limits password guesses at the admin login. Keep `:11313` on your own network, or put an identity layer like Cloudflare Access in front of it before giving it a hostname.
+
+To bind them differently, say the dashboard on loopback only, name the address you want:
+
+```bash
+QUECTO_ADMIN_LISTEN=127.0.0.1:11313   # then reach it over SSH: ssh -N -L 11313:127.0.0.1:11313 you@your-host
+```
+
+Name the same address for both to serve them from one listener, the way older versions did:
+
+```bash
+QUECTO_LISTEN=:11312
+QUECTO_ADMIN_LISTEN=:11312   # identical, so one port serves the proxy and the dashboard
+```
+
+Two different addresses that want the same port are refused at startup rather than left to fail the second bind.
+
 ### Without compose
 
 ```bash
@@ -56,7 +91,7 @@ export QUECTO_ADMIN_PASSWORD=$(openssl rand -base64 24)
 echo "save this, it is only used once: $QUECTO_ADMIN_PASSWORD"
 
 docker run -d --name quecto --restart unless-stopped \
-  -p 11312:11312 -v quecto-data:/data \
+  -p 11312:11312 -p 11313:11313 -v quecto-data:/data \
   -e QUECTO_UPSTREAM_URL=http://host.docker.internal:8080/v1 \
   -e QUECTO_ADMIN_PASSWORD="$QUECTO_ADMIN_PASSWORD" \
   --add-host host.docker.internal:host-gateway \
@@ -68,6 +103,8 @@ docker run -d --name quecto --restart unless-stopped \
 Write the password as `-e VAR="$VAR"` and not as a bare `-e VAR`. The bare form copies the value from Docker's own environment, which `sudo` clears, so under `sudo docker run` it passes nothing and the container exits 1 with `no admin password is set`.
 
 `--add-host` is what makes `host.docker.internal` resolve on Linux, where it is not built in. It is how the container reaches a model server running on the host.
+
+Both ports have to be published or the dashboard has no way in. What keeps the admin login private is not publishing `11313` to the internet, which is a decision for whatever terminates TLS in front of Quecto.
 
 ### When it does not come up
 
@@ -84,6 +121,8 @@ docker logs quecto
 | `permission denied ... /var/run/docker.sock` | Docker itself, not Quecto. Use `sudo`, or add yourself to the `docker` group |
 | 401 on a request | Key is wrong, expired, or revoked. The body says which |
 | Connection error on a request | Quecto cannot reach the upstream. Check `QUECTO_UPSTREAM_URL` and that the model server is listening |
+| Connection refused on `:11313` | The dashboard is on its own port now. Publish it with `-p 11313:11313` |
+| 404 on `:11312/admin` | Same thing. The proxy port stopped serving the dashboard |
 
 The password is only consumed when no admin account exists yet. Once one is stored in the volume, changing the variable does nothing, so reset it from the dashboard instead.
 
@@ -94,6 +133,7 @@ The password is only consumed when no admin account exists yet. Once one is stor
 | `QUECTO_UPSTREAM_URL` | required | Your model server, with or without the `/v1` suffix |
 | `QUECTO_ADMIN_PASSWORD` | | Creates the admin account on first start, then ignored |
 | `QUECTO_LISTEN` | `:11312` | `qp` in ASCII decimal, clear of llama.cpp on 8080 |
+| `QUECTO_ADMIN_LISTEN` | `:11313` | The dashboard and its API, off the proxy port. Set it to `QUECTO_LISTEN` to share one |
 | `QUECTO_DB_PATH` | `./quecto.db` | |
 | `QUECTO_UPSTREAM_API_KEY` | | Swapped in for the caller's key on the way out |
 | `QUECTO_LOG_RETENTION_DAYS` | `30` | Hourly totals outlive raw rows, so charts stay long range |

@@ -21,7 +21,8 @@ COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certifica
 COPY --from=build /quecto /quecto
 
 ENV QUECTO_LISTEN=:11312 \
+    QUECTO_ADMIN_LISTEN=:11313 \
     QUECTO_DB_PATH=/data/quecto.db
-EXPOSE 11312
+EXPOSE 11312 11313
 VOLUME ["/data"]
 ENTRYPOINT ["/quecto"]

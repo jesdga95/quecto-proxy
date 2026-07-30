@@ -87,6 +87,7 @@ export interface Settings {
   log_retention_days: number;
   log_max_rows: number;
   listen: string;
+  admin_listen: string;
   db_path: string;
   upstream_header_timeout: string;
   trust_proxy_headers: boolean;
@@ -117,7 +118,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
 
   const text = await res.text();
-  const body = text ? JSON.parse(text) : {};
+  let body: any = {};
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      // Something other than the API answered. Carry its words rather than
+      // failing on the parse and losing the status with them.
+      body = { error: text.trim() };
+    }
+  }
   if (!res.ok) {
     throw new ApiError(res.status, body.error || "Something went wrong.");
   }

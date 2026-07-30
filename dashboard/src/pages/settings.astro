@@ -151,6 +151,15 @@ import FormField from "../components/molecules/FormField.astro";
         `<span class="mono-chip break-all">${esc(s.listen)}</span>`,
       ),
       healthRow(
+        "Dashboard address",
+        s.admin_listen === s.listen
+          ? "QUECTO_ADMIN_LISTEN, shared, so anything reaching the proxy reaches this page"
+          : "QUECTO_ADMIN_LISTEN, so the proxy port serves no admin URL",
+        s.admin_listen === s.listen
+          ? `<span class="pill pill-warn">Shared with the proxy</span>`
+          : `<span class="mono-chip break-all">${esc(s.admin_listen)}</span>`,
+      ),
+      healthRow(
         "Database",
         "QUECTO_DB_PATH",
         `<span class="mono-chip break-all">${esc(s.db_path)}</span>`,

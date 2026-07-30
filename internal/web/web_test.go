@@ -35,7 +35,14 @@ func TestResolve(t *testing.T) {
 // checkout can still run the suite without Node.
 func requireBuilt(t *testing.T) http.Handler {
 	t.Helper()
-	h, err := Handler()
+	return requireBuiltAs(t, true)
+}
+
+// requireBuiltAs builds the handler for a browser that either is or is not
+// signed in.
+func requireBuiltAs(t *testing.T, signedIn bool) http.Handler {
+	t.Helper()
+	h, err := Handler(func(*http.Request) bool { return signedIn })
 	if err != nil {
 		t.Fatalf("build handler: %v", err)
 	}
@@ -61,7 +68,7 @@ func TestUnbuiltDashboardExplainsItself(t *testing.T) {
 func TestServesPages(t *testing.T) {
 	h := requireBuilt(t)
 
-	for _, path := range []string{"/admin/", "/admin/keys", "/admin/logs", "/admin/settings", "/admin/login"} {
+	for _, path := range []string{"/admin/", "/admin/keys", "/admin/logs", "/admin/settings"} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
 
@@ -78,12 +85,25 @@ func TestServesPages(t *testing.T) {
 	}
 }
 
+// This mount serves a browser, so its own miss is a page. The API beside it
+// answers in JSON, and neither has to know about the other.
 func TestUnknownPageIsNotFound(t *testing.T) {
 	h := requireBuilt(t)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest("GET", "/admin/nope", nil))
+
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown page = %d, want 404", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want html", ct)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "404") || !strings.Contains(body, "Not found") {
+		t.Errorf("the page does not say what happened: %q", body)
+	}
+	if !strings.Contains(body, `href="`+Prefix+`/"`) {
+		t.Error("the page offers no way back to the dashboard")
 	}
 }
 
@@ -139,6 +159,90 @@ func TestIconsAreInlined(t *testing.T) {
 		if strings.Contains(body, ref) {
 			t.Errorf("page loads from an external host: %q", ref)
 		}
+	}
+}
+
+// A signed out browser must be sent to the login page without ever receiving
+// the dashboard markup, which is what made the old page flash before it
+// bounced itself.
+func TestSignedOutIsRedirectedBeforeAnyMarkup(t *testing.T) {
+	h := requireBuiltAs(t, false)
+
+	for _, path := range []string{"/admin/", "/admin/keys", "/admin/logs", "/admin/settings", "/admin/index.html"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+
+		if rec.Code != http.StatusFound {
+			t.Errorf("GET %s = %d, want 302", path, rec.Code)
+			continue
+		}
+		if got := rec.Header().Get("Location"); got != LoginPath {
+			t.Errorf("GET %s sent the browser to %q, want %q", path, got, LoginPath)
+		}
+		if strings.Contains(rec.Body.String(), "<!DOCTYPE html>") {
+			t.Errorf("GET %s leaked a page to a signed out browser", path)
+		}
+	}
+}
+
+func TestSignedOutCanReachLoginAndItsAssets(t *testing.T) {
+	h := requireBuiltAs(t, false)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/admin/login", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /admin/login = %d, want 200", rec.Code)
+	}
+
+	// Gating assets too would leave the login page unstyled and inert.
+	asset := findAsset(t, rec.Body.String())
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", asset, nil))
+	if rec.Code != http.StatusOK {
+		t.Errorf("GET %s = %d, want 200", asset, rec.Code)
+	}
+}
+
+// Nothing on the login page is useful once a session exists.
+func TestSignedInSkipsLogin(t *testing.T) {
+	h := requireBuiltAs(t, true)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/admin/login", nil))
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("GET /admin/login = %d, want 302", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != Prefix+"/" {
+		t.Errorf("Location = %q, want %q", got, Prefix+"/")
+	}
+}
+
+// Answering 404 for a signed out visitor would map which pages exist.
+func TestSignedOutLearnsNothingFromAnUnknownPage(t *testing.T) {
+	h := requireBuiltAs(t, false)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/admin/nope", nil))
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("unknown page while signed out = %d, want 302", rec.Code)
+	}
+}
+
+// A cache holding either answer would serve it to the wrong browser.
+func TestCookieDependentRepliesAreNotCached(t *testing.T) {
+	rec := httptest.NewRecorder()
+	requireBuiltAs(t, false).ServeHTTP(rec, httptest.NewRequest("GET", "/admin/", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("redirect Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Header().Get("Vary"); got != "Cookie" {
+		t.Errorf("redirect Vary = %q, want Cookie", got)
+	}
+
+	rec = httptest.NewRecorder()
+	requireBuiltAs(t, true).ServeHTTP(rec, httptest.NewRequest("GET", "/admin/", nil))
+	if got := rec.Header().Get("Vary"); got != "Cookie" {
+		t.Errorf("page Vary = %q, want Cookie", got)
 	}
 }
 

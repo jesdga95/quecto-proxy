@@ -93,22 +93,35 @@ func New(cfg *config.Config, st *store.Store, registry *keys.Registry, limiter *
 	}, nil
 }
 
-func (s *Server) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /admin/api/session", s.handleLogin)
-	mux.HandleFunc("DELETE /admin/api/session", s.handleLogout)
+// Prefix is where the admin API is mounted. Every route below carries it, so
+// the handler can be mounted there without the path being rewritten.
+const Prefix = "/admin/api"
 
-	mux.Handle("GET /admin/api/me", s.auth(s.handleMe))
-	mux.Handle("GET /admin/api/keys", s.auth(s.handleListKeys))
-	mux.Handle("POST /admin/api/keys", s.auth(s.handleCreateKey))
-	mux.Handle("GET /admin/api/keys/{id}", s.auth(s.handleGetKey))
-	mux.Handle("PATCH /admin/api/keys/{id}", s.auth(s.handleUpdateKey))
-	mux.Handle("POST /admin/api/keys/{id}/revoke", s.auth(s.handleRevokeKey))
-	mux.Handle("DELETE /admin/api/keys/{id}", s.auth(s.handleDeleteKey))
-	mux.Handle("GET /admin/api/logs", s.auth(s.handleListLogs))
-	mux.Handle("GET /admin/api/stats", s.auth(s.handleStats))
-	mux.Handle("GET /admin/api/health", s.auth(s.handleHealth))
-	mux.Handle("GET /admin/api/settings", s.auth(s.handleGetSettings))
-	mux.Handle("PATCH /admin/api/settings", s.auth(s.handleUpdateSettings))
+// Handler is the whole admin API behind one mount, including how it answers a
+// path it does not serve. Nothing outside has to know the routes or the shape.
+func (s *Server) Handler() http.Handler {
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST "+Prefix+"/session", s.handleLogin)
+	mux.HandleFunc("DELETE "+Prefix+"/session", s.handleLogout)
+
+	mux.Handle("GET "+Prefix+"/me", s.auth(s.handleMe))
+	mux.Handle("GET "+Prefix+"/keys", s.auth(s.handleListKeys))
+	mux.Handle("POST "+Prefix+"/keys", s.auth(s.handleCreateKey))
+	mux.Handle("GET "+Prefix+"/keys/{id}", s.auth(s.handleGetKey))
+	mux.Handle("PATCH "+Prefix+"/keys/{id}", s.auth(s.handleUpdateKey))
+	mux.Handle("POST "+Prefix+"/keys/{id}/revoke", s.auth(s.handleRevokeKey))
+	mux.Handle("DELETE "+Prefix+"/keys/{id}", s.auth(s.handleDeleteKey))
+	mux.Handle("GET "+Prefix+"/logs", s.auth(s.handleListLogs))
+	mux.Handle("GET "+Prefix+"/stats", s.auth(s.handleStats))
+	mux.Handle("GET "+Prefix+"/health", s.auth(s.handleHealth))
+	mux.Handle("GET "+Prefix+"/settings", s.auth(s.handleGetSettings))
+	mux.Handle("PATCH "+Prefix+"/settings", s.auth(s.handleUpdateSettings))
+
+	// Everything reaching this mount is an API call, so a miss answers the way
+	// the routes above do rather than as the router's plain text.
+	mux.Handle("/", notFoundHandler())
+	return mux
 }
 
 func (s *Server) rotatePassword(hash string) {
@@ -130,10 +143,25 @@ func (s *Server) passwordHash() string {
 	return s.pwHash
 }
 
+// notFoundHandler answers unknown admin API paths in the shape the dashboard
+// parses. The router would write plain text, which the browser client cannot
+// read a message out of.
+func notFoundHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "That endpoint does not exist.")
+	})
+}
+
+// Authenticated reports whether a request carries a session cookie that still
+// verifies. The dashboard handler uses it to decide what a browser may load.
+func (s *Server) Authenticated(r *http.Request) bool {
+	c, err := r.Cookie(sessionCookie)
+	return err == nil && s.session().valid(c.Value, s.now())
+}
+
 func (s *Server) auth(next http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil || !s.session().valid(c.Value, s.now()) {
+		if !s.Authenticated(r) {
 			writeError(w, http.StatusUnauthorized, "Sign in to continue.")
 			return
 		}

@@ -30,7 +30,7 @@ func (stubHealth) OverheadP99() time.Duration                      { return 250 
 
 type harness struct {
 	t   *testing.T
-	mux *http.ServeMux
+	mux http.Handler
 	st  *store.Store
 	reg *keys.Registry
 	srv *Server
@@ -63,9 +63,7 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatalf("new admin: %v", err)
 	}
-	mux := http.NewServeMux()
-	srv.Routes(mux)
-	return &harness{t: t, mux: mux, st: st, reg: reg, srv: srv}
+	return &harness{t: t, mux: srv.Handler(), st: st, reg: reg, srv: srv}
 }
 
 func (h *harness) do(method, path string, body any, cookie *http.Cookie) *httptest.ResponseRecorder {
@@ -403,5 +401,38 @@ func TestSheddingDoesNotWeakenAuth(t *testing.T) {
 	// The correct password still works once there is no contention.
 	if code := h.do("POST", "/admin/api/session", map[string]string{"password": testPassword}, nil).Code; code != http.StatusOK {
 		t.Fatalf("correct password = %d, want 200", code)
+	}
+}
+
+// The handler owns every reply under its mount, including the ones for paths
+// it does not serve. A caller that parses JSON must never be handed anything
+// else, whatever it asks for.
+func TestAMissIsAnsweredInJson(t *testing.T) {
+	h := newHarness(t)
+
+	for _, c := range []struct{ method, path string }{
+		{"GET", "/admin/api/nope"},
+		{"GET", "/admin/api/"},
+		{"PUT", "/admin/api/keys"},   // a real path by a method it does not serve
+		{"GET", "/admin/api/keys/1"}, // signed out, so this one is a 401
+	} {
+		rec := h.do(c.method, c.path, nil, nil)
+		if rec.Code == http.StatusOK {
+			t.Errorf("%s %s = 200, want a refusal", c.method, c.path)
+			continue
+		}
+		if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
+			t.Errorf("%s %s Content-Type = %q, want application/json", c.method, c.path, ct)
+		}
+		var body struct {
+			Error string `json:"error"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Errorf("%s %s body is not JSON: %v", c.method, c.path, err)
+			continue
+		}
+		if body.Error == "" {
+			t.Errorf("%s %s carries no message", c.method, c.path)
+		}
 	}
 }

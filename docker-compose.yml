@@ -2,7 +2,10 @@ services:
   quecto:
     build: .
     ports:
+      # API
       - "11312:11312"
+      # Dashboard
+      - "11313:11313"
     volumes:
       - quecto-data:/data
     environment:

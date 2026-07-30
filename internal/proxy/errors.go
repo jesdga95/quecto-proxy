@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"quecto/internal/limit"
@@ -25,6 +26,23 @@ func (e *apiError) write(w http.ResponseWriter) {
 			"param":   nil,
 			"code":    e.Code,
 		},
+	})
+}
+
+// NotFoundHandler answers paths this port does not serve. Without it the
+// router writes plain text, which is the one reply on an OpenAI compatible
+// surface a client cannot read a message out of.
+//
+// It says nothing about what is here. This port faces whoever can reach it,
+// and a client that belongs on it already knows the URL it wants.
+func NotFoundHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		(&apiError{
+			Status:  http.StatusNotFound,
+			Message: fmt.Sprintf("Invalid URL (%s %s)", r.Method, r.URL.Path),
+			Type:    "invalid_request_error",
+			Code:    "unknown_url",
+		}).write(w)
 	})
 }
 

@@ -12,6 +12,7 @@ type settingsResponse struct {
 
 	// Changing these needs a restart, so the dashboard shows them read only.
 	Listen                string `json:"listen"`
+	AdminListen           string `json:"admin_listen"`
 	DBPath                string `json:"db_path"`
 	UpstreamHeaderTimeout string `json:"upstream_header_timeout"`
 	TrustProxyHeaders     bool   `json:"trust_proxy_headers"`
@@ -26,6 +27,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, settingsResponse{
 		Values:                v,
 		Listen:                s.cfg.Listen,
+		AdminListen:           s.cfg.AdminListen,
 		DBPath:                s.cfg.DBPath,
 		UpstreamHeaderTimeout: s.cfg.UpstreamHeaderTimeout.String(),
 		TrustProxyHeaders:     s.cfg.TrustProxyHeaders,
@@ -70,7 +72,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.rotatePassword(hash)
 		// The old cookie no longer verifies, so hand this browser a fresh one.
-		s.setSessionCookie(w, r, s.sessions.issue(s.now()), sessionTTL)
+		s.setSessionCookie(w, r, s.session().issue(s.now()), sessionTTL)
 	}
 
 	s.handleGetSettings(w, r)

@@ -16,9 +16,36 @@ import (
 //go:embed all:dist
 var dist embed.FS
 
+// The pages this package serves without the dashboard build, kept as markup
+// next to the code rather than as string literals inside it.
+//
+//go:embed pages/*.html
+var pages embed.FS
+
+var (
+	notFoundHTML = mustPage("pages/not-found.html")
+	notBuiltHTML = mustPage("pages/not-built.html")
+)
+
+func mustPage(name string) []byte {
+	body, err := pages.ReadFile(name)
+	if err != nil {
+		panic(err)
+	}
+	return body
+}
+
 // Prefix is where the dashboard is mounted. The Astro build is compiled with
 // the same base, so asset URLs already carry it.
 const Prefix = "/admin"
+
+// LoginPath is the one page a signed out browser is allowed to reach.
+const LoginPath = Prefix + "/login"
+
+const loginPage = "login.html"
+
+// Authenticated reports whether a request may see a dashboard page.
+type Authenticated func(*http.Request) bool
 
 // Built reports whether the dashboard was compiled into this binary.
 func Built() bool {
@@ -26,7 +53,9 @@ func Built() bool {
 	return err == nil
 }
 
-func Handler() (http.Handler, error) {
+// Handler serves the dashboard, sending a browser to the login page before any
+// markup goes out rather than letting the page load and bounce itself.
+func Handler(authed Authenticated) (http.Handler, error) {
 	root, err := fs.Sub(dist, "dist")
 	if err != nil {
 		return nil, err
@@ -38,13 +67,26 @@ func Handler() (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name, ok := resolve(strings.TrimPrefix(r.URL.Path, Prefix))
 		if !ok {
-			http.NotFound(w, r)
+			notFoundPage(w, r)
 			return
+		}
+
+		// Decided before the file is read, so an unknown page cannot tell a
+		// signed out visitor whether it exists.
+		if page := strings.HasSuffix(name, ".html"); page {
+			switch signedIn := authed(r); {
+			case !signedIn && name != loginPage:
+				redirect(w, r, LoginPath)
+				return
+			case signedIn && name == loginPage:
+				redirect(w, r, Prefix+"/")
+				return
+			}
 		}
 
 		body, err := fs.ReadFile(root, name)
 		if err != nil {
-			http.NotFound(w, r)
+			notFoundPage(w, r)
 			return
 		}
 
@@ -56,43 +98,50 @@ func Handler() (http.Handler, error) {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		} else {
 			w.Header().Set("Cache-Control", "no-cache")
+			// Which page comes back now depends on the session cookie.
+			w.Header().Set("Vary", "Cookie")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Write(body)
 	}), nil
 }
 
+// redirect keeps a cookie dependent answer out of every cache between here and
+// the browser.
+func redirect(w http.ResponseWriter, r *http.Request, to string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Vary", "Cookie")
+	http.Redirect(w, r, to, http.StatusFound)
+}
+
+// NotFoundHandler answers a URL this port does not serve. The port exists to
+// be opened in a browser, so its misses are pages, whatever the path was. The
+// API mounted beside the dashboard answers its own in JSON.
+func NotFoundHandler() http.Handler {
+	return http.HandlerFunc(notFoundPage)
+}
+
+// notFoundPage answers a dashboard URL that does not exist. This mount serves
+// a browser, so it says so in the markup a browser renders.
+func notFoundPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusNotFound)
+	w.Write(notFoundHTML)
+}
+
 // notBuiltHandler explains the missing dashboard rather than returning a bare
 // 404, which would look like a routing bug.
 func notBuiltHandler() http.Handler {
-	const page = `<!doctype html>
-<meta charset="utf-8">
-<title>Dashboard not built</title>
-<style>
-body{font:14px/1.6 ui-sans-serif,system-ui,sans-serif;color:#111417;background:#fff;
-     margin:0;display:grid;place-items:center;min-height:100vh;padding:24px}
-main{max-width:34rem}
-h1{font-size:17px;margin:0 0 8px}
-p{color:#4c5457;margin:0 0 14px}
-pre{background:#f4f6f6;border:1px solid #e6eaea;border-radius:6px;padding:12px;
-    font:12.5px ui-monospace,monospace;overflow-x:auto;margin:0}
-</style>
-<main>
-  <h1>The dashboard was not built into this binary</h1>
-  <p>The proxy itself is running normally. Only the admin pages are missing.
-     Build the dashboard, then rebuild the binary so it can be embedded:</p>
-  <pre>make dashboard &amp;&amp; go build ./cmd/quecto</pre>
-</main>`
-
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, Prefix), "/assets/") {
-			http.NotFound(w, r)
+			notFoundPage(w, r)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(page))
+		w.Write(notBuiltHTML)
 	})
 }
 

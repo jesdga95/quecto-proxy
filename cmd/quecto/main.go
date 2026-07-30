@@ -73,31 +73,27 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"status":"ok"}`))
-	})
-	adminSrv.Routes(mux)
-	mux.Handle("/v1/", px.Handler())
-
-	dashboard, err := web.Handler()
+	dashboard, err := web.Handler(adminSrv.Authenticated)
 	if err != nil {
 		return err
 	}
-	mux.Handle(web.Prefix+"/", dashboard)
 	if !web.Built() {
 		log.Warn("the dashboard was not built into this binary, admin pages are unavailable",
 			"fix", "make dashboard && go build ./cmd/quecto")
 	}
-	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, web.Prefix+"/", http.StatusFound)
-	})
+	public, adminMux := routes(cfg, adminSrv.Handler(), dashboard, px.Handler())
 
-	srv := &http.Server{
+	servers := []*http.Server{{
 		Addr:              cfg.Listen,
-		Handler:           mux,
+		Handler:           public,
 		ReadHeaderTimeout: 10 * time.Second,
+	}}
+	if cfg.AdminListen != cfg.Listen {
+		servers = append(servers, &http.Server{
+			Addr:              cfg.AdminListen,
+			Handler:           adminMux,
+			ReadHeaderTimeout: 10 * time.Second,
+		})
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -106,13 +102,17 @@ func run(log *slog.Logger) error {
 	go writer.Run(ctx)
 	go sweepIdleKeys(ctx, limiter)
 
-	errc := make(chan error, 1)
-	go func() {
-		log.Info("listening", "addr", cfg.Listen, "upstream", live.Values().UpstreamURL, "keys", registry.Len())
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			errc <- err
-		}
-	}()
+	log.Info("listening", "addr", cfg.Listen, "upstream", live.Values().UpstreamURL, "keys", registry.Len())
+	log.Info("dashboard listening", "addr", cfg.AdminListen+web.Prefix)
+
+	errc := make(chan error, len(servers))
+	for _, s := range servers {
+		go func() {
+			if err := s.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
 
 	select {
 	case err := <-errc:
@@ -123,11 +123,47 @@ func run(log *slog.Logger) error {
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	shutdownErr := srv.Shutdown(shutdownCtx)
+	var shutdownErr error
+	for _, s := range servers {
+		if err := s.Shutdown(shutdownCtx); err != nil && shutdownErr == nil {
+			shutdownErr = err
+		}
+	}
 
 	writer.Wait()
 	saveBalances(db, limiter, log)
 	return shutdownErr
+}
+
+// routes mounts each handler on the port it belongs to. Every mount owns its
+// own surface end to end, including how it answers a path it does not serve,
+// so nothing here needs to know a route or an error shape.
+//
+// The two muxes are the same one unless the dashboard was given its own
+// address, in which case the proxy port carries no admin URL at all.
+func routes(cfg *config.Config, adminAPI, dashboard, px http.Handler) (proxyMux, adminMux *http.ServeMux) {
+	proxyMux = http.NewServeMux()
+	proxyMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"status":"ok"}`))
+	})
+	proxyMux.Handle("/v1/", px)
+	proxyMux.Handle("/", proxy.NotFoundHandler())
+
+	adminMux = proxyMux
+	if cfg.AdminListen != cfg.Listen {
+		adminMux = http.NewServeMux()
+		// This port is opened in a browser, so what it says about a path it
+		// does not serve is a page. Sharing a port with the proxy, that one is
+		// already answering here and claims the pattern.
+		adminMux.Handle("/", web.NotFoundHandler())
+	}
+	adminMux.Handle(admin.Prefix+"/", adminAPI)
+	adminMux.Handle(web.Prefix+"/", dashboard)
+	adminMux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, web.Prefix+"/", http.StatusFound)
+	})
+	return proxyMux, adminMux
 }
 
 func sweepIdleKeys(ctx context.Context, limiter *limit.Limiter) {
