@@ -1,0 +1,39 @@
+---
+interface Props {
+  /** Edge of the badge in pixels. Everything else is measured from it. */
+  size?: number;
+  /** The mark stands alone once the lockup would fall under 120px wide. */
+  wordmark?: boolean;
+  class?: string;
+}
+const { size = 30, wordmark = true, class: cls = "" } = Astro.props;
+
+// Flat, square, never recoloured, so the fills are literals rather than tokens.
+const type = Math.round(size * 0.47 * 10) / 10;
+const gap = Math.round(size * 0.27);
+---
+
+<span class:list={["inline-flex items-center", cls]} style={`gap:${gap}px`}>
+  <svg
+    width={size}
+    height={size}
+    viewBox="0 0 104 104"
+    class="shrink-0"
+    role={wordmark ? undefined : "img"}
+    aria-label={wordmark ? undefined : "Quecto"}
+    aria-hidden={wordmark ? "true" : undefined}
+  >
+    <rect width="104" height="104" rx="24" fill="#0D9488"></rect>
+    <circle cx="42" cy="44" r="15" fill="none" stroke="#FFFFFF" stroke-width="7"></circle>
+    <path d="M57 44V76" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"
+    ></path>
+    <path
+      d="M68 58l9 9-9 9"
+      fill="none"
+      stroke="#FCD34D"
+      stroke-width="7"
+      stroke-linecap="round"
+      stroke-linejoin="round"></path>
+  </svg>
+  {wordmark && <span class="wordmark text-ink" style={`font-size:${type}px`}>Quecto</span>}
+</span>

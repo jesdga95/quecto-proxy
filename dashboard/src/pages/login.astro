@@ -2,13 +2,14 @@
 import Auth from "../layouts/Auth.astro";
 import Button from "../components/atoms/Button.astro";
 import FormField from "../components/molecules/FormField.astro";
+import Logo from "../components/atoms/Logo.astro";
 ---
 
 <Auth title="Sign in">
   <form id="login-form" class="flex w-full max-w-[336px] flex-col gap-[18px]">
-    <div class="flex flex-col items-center gap-0.5 text-center">
-      <span class="font-mono text-[19px] font-semibold tracking-[0.08em]">QUECTO</span>
-      <span class="font-mono text-[10px] tracking-[0.04em] text-muted">10⁻³⁰ · proxy</span>
+    <div class="flex flex-col items-center gap-2 text-center">
+      <Logo size={46} />
+      <span class="text-[11px] tracking-[0.06em] text-muted">10⁻³⁰ · proxy</span>
     </div>
 
     <div class="card p-[18px]">

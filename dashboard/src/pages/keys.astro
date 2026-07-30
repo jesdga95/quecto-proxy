@@ -9,7 +9,7 @@ import FormField from "../components/molecules/FormField.astro";
 <Dashboard title="API keys" current="keys">
   <div class="mb-[22px] flex items-start justify-between gap-6">
     <div>
-      <h1 class="mb-[3px] text-xl font-semibold tracking-[-0.011em]">API keys</h1>
+      <h1 class="mb-[3px] text-xl font-medium tracking-[-0.011em]">API keys</h1>
       <p class="text-[13px] text-muted">
         Each key carries its own expiration and rate limits. A key is shown in
         full only once, at creation.
@@ -52,7 +52,7 @@ import FormField from "../components/molecules/FormField.astro";
   <div id="step-form">
     <div class="flex items-start justify-between gap-4 px-[18px] pt-[17px]">
       <div>
-        <h2 id="create-title" class="text-[15px] font-semibold">Create API key</h2>
+        <h2 id="create-title" class="text-[15px] font-medium">Create API key</h2>
         <p class="mt-[3px] text-[12.5px] text-muted">
           You will see the key once, right after it is created.
         </p>
@@ -91,7 +91,7 @@ import FormField from "../components/molecules/FormField.astro";
     </div>
 
     <div
-      class="flex justify-end gap-2 rounded-b-[11px] border-t border-line bg-surface px-[18px] py-3"
+      class="flex justify-end gap-2 rounded-b-[11px] border-t border-line bg-surface-2 px-[18px] py-3"
     >
       <Button variant="ghost" data-close>Cancel</Button>
       <Button id="do-create">Create key</Button>
@@ -100,7 +100,7 @@ import FormField from "../components/molecules/FormField.astro";
 
   <div id="step-done" hidden>
     <div class="px-[18px] pt-[17px]">
-      <h2 class="text-[15px] font-semibold">Key created</h2>
+      <h2 class="text-[15px] font-medium">Key created</h2>
       <p class="mt-[3px] text-[12.5px] text-muted">
         Copy it now. Quecto stores only a hash.
       </p>
@@ -132,7 +132,7 @@ import FormField from "../components/molecules/FormField.astro";
     </div>
 
     <div
-      class="flex justify-end rounded-b-[11px] border-t border-line bg-surface px-[18px] py-3"
+      class="flex justify-end rounded-b-[11px] border-t border-line bg-surface-2 px-[18px] py-3"
     >
       <Button id="finish" disabled>Done</Button>
     </div>
