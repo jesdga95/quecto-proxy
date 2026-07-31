@@ -16,11 +16,11 @@ Backend-only work needs no Node. A checkout without a built dashboard compiles a
 
 ## Scope
 
-Quecto does three things: keys, limits, logs. These are out of scope, and a pull request adding one will be declined however good it is:
+Quecto does three things: keys, limits, logs. It fronts one model server. These are out of scope, and a pull request adding one will be declined however good it is:
 
 model routing or fallback, provider translation, response caching, cost and billing, teams and roles, horizontal scaling, TLS termination.
 
-If you need a gateway, you want a gateway. The value here is that it stays small enough to read in an afternoon.
+That list is roughly the feature set of a multi-provider gateway, which is the right answer when you need one. The value here is being the smallest thing that hands out keys, caps what each one spends, and records it without storing prompts, in a binary you can read in an afternoon.
 
 ## Conventions
 
@@ -28,12 +28,13 @@ If you need a gateway, you want a gateway. The value here is that it stays small
 - **No em dashes anywhere**, least of all in user-facing copy. Restructure the sentence instead.
 - **Error messages are for the person reading them.** Say what went wrong and what to do, in plain sentences.
 - Hand-written SQL, no ORM. Stdlib routing, no framework.
+- **A new dependency is close to a no.** Two direct modules today, twelve in the whole build, and part of the pitch is that there is very little here to patch. A dependency has to do something the standard library genuinely cannot.
 - The dashboard shares one visual vocabulary in `global.css`, so components and script-rendered rows use the same classes.
 
 ## Tests
 
-`limit` and `proxy` carry the load-bearing behaviour and are expected to stay well covered. Anything touching the request path should also come with a benchmark, since the point of this project is that it is fast.
+`limit` and `proxy` carry the load-bearing behaviour and are expected to stay well covered. Anything touching the request path should also come with a benchmark, so a regression shows up as a number rather than an opinion.
 
-**The database is never on the proxy hot path.** Keys live in a map, limiters in memory, log writes go through a buffered channel. A change that makes a proxied request touch disk is a change to what Quecto is.
+**The database is never on the proxy hot path.** Keys live in a map, limiters in memory, log writes go through a buffered channel. That is what lets a single process hold authoritative limits with no Redis behind it, so a change that makes a proxied request touch disk is a change to what Quecto is.
 
 Run `go test -race ./...` before opening a pull request.
