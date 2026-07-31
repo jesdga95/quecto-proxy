@@ -162,12 +162,14 @@ import FormField from "../components/molecules/FormField.astro";
   };
   const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
 
-  /** One rail per limit, showing how much of the allowance the limiter has left.
-   * Remaining goes negative on an overdrawn key, so it is clamped to read as full.
+  /** One rail per limit, reading what the key spent over the last minute against
+   * what it is allowed. A burst bucket admits its burst plus a minute of refill,
+   * so a spend above the limit is real and the rail clamps rather than the number.
+   * The colour comes from the bucket, which is the thing that actually refuses.
    * The fill never drops below a sliver, so an idle rail still reads as a rail. */
   function meter(
     used: number,
-    remaining: number,
+    exhausted: boolean,
     limit: number | null,
     unit: string,
     fmt: (n: number) => string,
@@ -177,10 +179,9 @@ import FormField from "../components/molecules/FormField.astro";
     let pct = 2;
 
     if (limit !== null) {
-      const spent = limit - Math.max(0, Math.min(limit, remaining));
-      value = `${fmt(spent)}/${fmt(limit)}`;
-      pct = Math.max(2, Math.min(100, Math.round((spent / limit) * 100)));
-      state = remaining <= 0 ? "is-full" : spent === 0 ? "is-idle" : "";
+      value = `${fmt(used)}/${fmt(limit)}`;
+      pct = Math.max(2, Math.min(100, Math.round((used / limit) * 100)));
+      state = exhausted ? "is-full" : used === 0 ? "is-idle" : "";
     }
 
     return `<div class="meter ${state}">
@@ -200,8 +201,8 @@ import FormField from "../components/molecules/FormField.astro";
     return `<td>
       <span class="key-label">Current usage</span>
       <div class="meters">
-        ${meter(k.live.rpm_used, k.live.rpm_remaining, k.rpm_limit, "rpm", count)}
-        ${meter(k.live.tpm_used, k.live.tpm_remaining, k.tpm_limit, "tpm", tokensTight)}
+        ${meter(k.live.rpm_used, k.live.rpm_exhausted, k.rpm_limit, "rpm", count)}
+        ${meter(k.live.tpm_used, k.live.tpm_exhausted, k.tpm_limit, "tpm", tokensTight)}
       </div>
     </td>`;
   }
