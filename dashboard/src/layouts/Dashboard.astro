@@ -21,14 +21,17 @@ const { title, current } = Astro.props;
     <title>{title} · Quecto</title>
   </head>
   <body class="m-0">
-    <!-- Two columns become two blocks, which also lets the bar at the top of a
-         phone stick to the viewport rather than to its grid row. -->
+    <!-- Two columns become two blocks, which also lets the brand row and the tab
+         bar stick to the viewport rather than to their grid row. -->
     <div class="grid min-h-screen grid-cols-[240px_1fr] max-md:block">
       <Sidebar current={current} />
       <main class="min-w-0">
         <!-- Centred, so the space past the cap splits evenly rather than
-             collecting on the right. -->
-        <div class="mx-auto max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4 max-md:pt-5 max-md:pb-10">
+             collecting on the right. The phone padding clears the tab bar, which
+             is fixed and so takes no room of its own. -->
+        <div
+          class="mx-auto max-w-[1200px] px-8 pt-7 pb-16 max-md:px-4 max-md:pt-5 max-md:pb-[calc(72px_+_env(safe-area-inset-bottom,0px))]"
+        >
           <slot />
         </div>
       </main>

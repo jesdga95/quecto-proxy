@@ -29,8 +29,11 @@ const nav = [
     </button>
   </div>
 
+  <!-- On a phone the tabs leave the top of the page for the bottom edge, where a
+       thumb already rests. Fixed to the viewport rather than the brand row, so
+       they stay put as the page scrolls, and padded past the home indicator. -->
   <nav
-    class="flex flex-col gap-0.5 px-2.5 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:px-3 max-md:pb-2.5"
+    class="flex flex-col gap-0.5 px-2.5 max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-40 max-md:flex-row max-md:gap-0 max-md:border-t max-md:border-line max-md:bg-surface max-md:px-1.5 max-md:pt-1.5 max-md:pb-[calc(6px_+_env(safe-area-inset-bottom,0px))]"
     aria-label="Primary"
   >
     {
@@ -39,16 +42,24 @@ const nav = [
           href={item.href}
           aria-current={current === item.id ? "page" : undefined}
           class:list={[
-            "flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] transition-colors max-md:shrink-0 max-md:gap-2 max-md:whitespace-nowrap",
+            "flex items-center gap-2.5 rounded-md px-2.5 py-[7px] text-[13.5px] transition-colors",
+            "max-md:relative max-md:flex-1 max-md:flex-col max-md:justify-center max-md:gap-[3px] max-md:px-1 max-md:py-1.5 max-md:text-[10.5px] max-md:whitespace-nowrap",
             current === item.id
-              ? "bg-accent-bg font-medium text-accent"
-              : "text-ink-2 hover:bg-surface-2 hover:text-ink",
+              ? // A filled pill spans a whole tab down here, which is heavier than
+                // the selection deserves, so the tint carries it alone.
+                "bg-accent-bg font-medium text-accent max-md:bg-transparent"
+              : "text-ink-2 hover:bg-surface-2 hover:text-ink max-md:hover:bg-transparent",
           ]}
         >
           <Icon name={item.icon} class="size-[17px] shrink-0" />
           {item.label}
           {item.id === "keys" && (
-            <span id="nav-key-count" class="num ml-auto text-[11px] text-muted" />
+            // A stacked tab has no room beside the label, so the count leaves the
+            // flow and badges the icon instead.
+            <span
+              id="nav-key-count"
+              class="num ml-auto text-[11px] text-muted max-md:absolute max-md:top-0.5 max-md:left-[calc(50%_+_7px)] max-md:ml-0 max-md:text-[9.5px]"
+            />
           )}
         </a>
       ))
