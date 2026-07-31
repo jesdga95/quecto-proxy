@@ -30,6 +30,14 @@ type Decision struct {
 	// True once the balance is spent, which is when token limited calls are refused.
 	TPMExhausted bool
 
+	// The lifetime allowance, which never refills. TotalSpent is tallied for
+	// every key, so it reads even where no quota is enforced.
+	TotalLimit     *int64
+	TotalSpent     int64
+	TotalRemaining int64
+	// True once the quota is gone, which makes the key permanently unusable.
+	TotalExhausted bool
+
 	// What the key spent over the last minute, which is what the rpm and tpm
 	// labels mean to a reader. Set whether or not a limit is configured.
 	RPMUsed int64
@@ -42,6 +50,12 @@ type keyState struct {
 
 	tpmLimit *int
 	tpm      *tokenBucket
+
+	totalLimit *int64
+	spent      int64
+	// The lifetime tally is seeded from the key row once and then owned here, so
+	// a registry reload part way through a batch cannot rewind it.
+	seeded bool
 
 	used     window
 	lastSeen time.Time
@@ -83,6 +97,12 @@ func (l *Limiter) state(k *store.APIKey, now time.Time, touch bool) *keyState {
 			s.tpm = newTokenBucket(float64(*k.TPMLimit), now)
 		}
 	}
+	// The quota has no bucket to rebuild, so an edited limit is simply the new
+	// ceiling the existing tally is measured against.
+	if !s.seeded {
+		s.spent, s.seeded = k.TokensSpent, true
+	}
+	s.totalLimit = copyInt64(k.TotalTokenLimit)
 	if touch {
 		s.lastSeen = now
 	}
@@ -93,12 +113,24 @@ func (l *Limiter) state(k *store.APIKey, now time.Time, touch bool) *keyState {
 // the TPM bucket. A refused request consumes nothing.
 func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision) {
 	now := l.now()
+	if reserve < 0 {
+		reserve = 0
+	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.state(k, now, true)
 
-	d := Decision{Allowed: true, RPMLimit: s.rpmLimit, TPMLimit: s.tpmLimit}
+	d := Decision{Allowed: true, RPMLimit: s.rpmLimit, TPMLimit: s.tpmLimit, TotalLimit: s.totalLimit}
+
+	// The quota goes first because it is the one refusal that never clears on its
+	// own, so there is no point reporting a retry hint from a refilling bucket.
+	if s.totalLimit != nil && s.spent >= *s.totalLimit {
+		d.Allowed = false
+		d.Reason = "quota"
+		l.fill(&d, s, now)
+		return nil, d
+	}
 
 	// Check the token bucket before spending a request, so a refusal is free.
 	if s.tpm != nil {
@@ -122,16 +154,14 @@ func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision)
 
 	s.used.add(now, 1, 0)
 
-	var res *Reservation
+	// Only the refilling bucket holds the reserve, because only it gets the
+	// unused part back within seconds. Charging max_tokens against a quota that
+	// never refills would spend the whole allowance the moment a long reply
+	// started, and the key would read exhausted for as long as it ran.
 	if s.tpm != nil {
-		if reserve < 0 {
-			reserve = 0
-		}
 		s.tpm.balance -= float64(reserve)
-		res = &Reservation{limiter: l, keyID: k.ID, reserved: reserve}
-	} else {
-		res = &Reservation{limiter: l, keyID: k.ID}
 	}
+	res := &Reservation{limiter: l, keyID: k.ID, reserved: reserve}
 
 	l.fill(&d, s, now)
 	return res, d
@@ -143,13 +173,18 @@ func (l *Limiter) Peek(k *store.APIKey) Decision {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	s := l.state(k, now, false)
-	d := Decision{Allowed: true, RPMLimit: s.rpmLimit, TPMLimit: s.tpmLimit}
+	d := Decision{Allowed: true, RPMLimit: s.rpmLimit, TPMLimit: s.tpmLimit, TotalLimit: s.totalLimit}
 	l.fill(&d, s, now)
 	return d
 }
 
 func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 	d.RPMUsed, d.TPMUsed = s.used.sum(now)
+	d.TotalSpent = s.spent
+	if s.totalLimit != nil {
+		d.TotalRemaining = max(0, *s.totalLimit-s.spent)
+		d.TotalExhausted = s.spent >= *s.totalLimit
+	}
 	if s.rpm != nil {
 		avail := s.rpm.TokensAt(now)
 		if avail < 0 {
@@ -170,19 +205,44 @@ func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 	}
 }
 
-// Sweep drops buckets for keys that have been idle, keeping memory flat.
+// Sweep drops buckets for keys that have been idle, keeping memory flat. State
+// carrying a quota stays put: the per minute buckets refill on their own so
+// losing them costs nothing, but a lifetime tally rebuilt from a key row the
+// registry has not reloaded would hand back allowance that was already spent.
 func (l *Limiter) Sweep(idleFor time.Duration) int {
 	cutoff := l.now().Add(-idleFor)
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := 0
 	for id, s := range l.byKey {
+		if s.totalLimit != nil {
+			continue
+		}
 		if s.lastSeen.Before(cutoff) {
 			delete(l.byKey, id)
 			n++
 		}
 	}
 	return n
+}
+
+// ResetSpend clears the lifetime tally for one key, which is what revives a key
+// that spent its quota. The database column is cleared by the same admin write.
+func (l *Limiter) ResetSpend(keyID int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s := l.byKey[keyID]; s != nil {
+		s.spent = 0
+	}
+}
+
+// Forget drops everything held for a key, and must be called when one is
+// deleted. SQLite hands the next key the id the deleted one gave up, so state
+// left behind here would be inherited by a key that never spent it.
+func (l *Limiter) Forget(keyID int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.byKey, keyID)
 }
 
 // Balances returns the current token balance per key, for checkpointing.
@@ -230,6 +290,14 @@ func samePtr(a, b *int) bool {
 }
 
 func copyInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func copyInt64(p *int64) *int64 {
 	if p == nil {
 		return nil
 	}

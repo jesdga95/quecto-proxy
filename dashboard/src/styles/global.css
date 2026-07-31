@@ -274,37 +274,35 @@
     background: var(--surface-2);
     color: var(--muted);
   }
-  /* A labelled rail per limit, sized so the pair holds still as the numbers move. */
-  .meters {
-    display: flex;
-    gap: 22px;
+  /* One labelled lane per limit, stacked so the same limit lands in the same
+     place on every row and a column of rpm can be read down the table. Three
+     fixed tracks, so the numbers can move without anything shifting. */
+  .lanes {
+    display: grid;
+    gap: 5px;
   }
-  /* Sized by its own label and count, so the pair sits left with slack to spare. */
-  .meter {
-    min-width: 92px;
+  .lane {
+    display: grid;
+    grid-template-columns: 34px 1fr 62px;
+    align-items: center;
+    gap: 9px;
   }
-  .meter-top {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 5px;
-  }
-  .meter .unit {
-    font-size: 9.5px;
+  .lane .unit {
+    font-size: 9px;
     font-weight: 500;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.05em;
     text-transform: uppercase;
     color: var(--muted);
   }
-  .meter .num {
+  .lane .num {
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 11.5px;
     font-variant-numeric: tabular-nums;
+    text-align: right;
     color: var(--text-2);
   }
   .rail {
-    height: 3px;
+    height: 4px;
     border-radius: 2px;
     background: var(--border);
     overflow: hidden;
@@ -315,16 +313,29 @@
     border-radius: 2px;
     background: var(--muted);
   }
-  /* Spent reads in the warning colour, untouched recedes to a hairline. */
-  .meter.is-full .num {
+  /* Spent reads in the warning colour, untouched recedes to a hairline, and a
+     limit that is not set has nothing to read against at all. */
+  .lane.is-full .num {
     color: var(--crit);
-    font-weight: 600;
+    font-weight: 500;
   }
-  .meter.is-full .rail span {
+  .lane.is-full .rail span {
     background: var(--crit);
   }
-  .meter.is-idle .rail span {
+  .lane.is-idle .rail span,
+  .lane.is-off .rail span {
     background: var(--border-2);
+  }
+  .lane.is-off .num {
+    color: var(--muted);
+  }
+  /* The quota is the one allowance that only empties: the other two refill
+     within the minute, so it reads as a track being consumed, not a rate. */
+  .lane.is-quota .rail {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
   }
 
   .mono-chip {
@@ -403,6 +414,11 @@
     table-layout: fixed;
     min-width: 960px;
   }
+  /* Three stacked lanes set the row height, so the vertical padding comes in. */
+  .key-table tbody td {
+    padding-top: 11px;
+    padding-bottom: 11px;
+  }
   .key-table td {
     white-space: nowrap;
   }
@@ -459,6 +475,19 @@
     .key-table td.key-actions {
       grid-row: 1;
       grid-column: 2;
+    }
+    /* The lanes take the whole width once stacked, since there is no longer a
+       column pinning them, and the numbers get the room the label saved. */
+    .key-table td.lanes-cell {
+      grid-column: 1 / -1;
+      margin: 4px 0 2px;
+    }
+    .key-table td.lanes-cell .key-label {
+      display: block;
+      margin-bottom: 5px;
+    }
+    .lane {
+      grid-template-columns: 38px 1fr 70px;
     }
     .key-label {
       display: inline;

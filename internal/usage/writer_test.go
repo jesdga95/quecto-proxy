@@ -105,6 +105,10 @@ func TestRecordsAreWrittenAndAggregated(t *testing.T) {
 	if k.TotalRequests != 3 || k.TotalPromptTokens != 300 || k.TotalCompletionTokens != 75 {
 		t.Errorf("key counters = %d/%d/%d", k.TotalRequests, k.TotalPromptTokens, k.TotalCompletionTokens)
 	}
+	// The quota ledger rides along here, which is what carries it over a restart.
+	if k.TokensSpent != 375 {
+		t.Errorf("tokens spent = %d, want 375", k.TokensSpent)
+	}
 	if k.LastUsedAt == nil {
 		t.Error("last used was not recorded")
 	}

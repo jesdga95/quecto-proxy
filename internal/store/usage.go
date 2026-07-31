@@ -112,10 +112,14 @@ func (s *Store) WriteBatch(rows []LogRow) error {
 		}
 	}
 
+	// tokens_spent rides along here so the lifetime quota survives a restart.
+	// The limiter holds the authoritative tally while the process runs and seeds
+	// itself from this column on the way up.
 	counters, err := tx.Prepare(`UPDATE api_keys SET
 		total_requests = total_requests + ?,
 		total_prompt_tokens = total_prompt_tokens + ?,
 		total_completion_tokens = total_completion_tokens + ?,
+		tokens_spent = tokens_spent + ?,
 		last_used_at = MAX(COALESCE(last_used_at, 0), ?)
 		WHERE id = ?`)
 	if err != nil {
@@ -124,7 +128,8 @@ func (s *Store) WriteBatch(rows []LogRow) error {
 	defer counters.Close()
 
 	for _, d := range perKey {
-		if _, err := counters.Exec(d.Requests, d.PromptTokens, d.CompletionTokens, d.LastUsedAt, d.KeyID); err != nil {
+		if _, err := counters.Exec(d.Requests, d.PromptTokens, d.CompletionTokens,
+			d.PromptTokens+d.CompletionTokens, d.LastUsedAt, d.KeyID); err != nil {
 			return fmt.Errorf("write usage batch: %w", err)
 		}
 	}

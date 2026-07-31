@@ -11,16 +11,17 @@ import (
 )
 
 type keyDTO struct {
-	ID         int64  `json:"id"`
-	Name       string `json:"name"`
-	KeyPrefix  string `json:"key_prefix"`
-	CreatedAt  int64  `json:"created_at"`
-	ExpiresAt  *int64 `json:"expires_at"`
-	RevokedAt  *int64 `json:"revoked_at"`
-	RPMLimit   *int   `json:"rpm_limit"`
-	TPMLimit   *int   `json:"tpm_limit"`
-	LastUsedAt *int64 `json:"last_used_at"`
-	Status     string `json:"status"`
+	ID              int64  `json:"id"`
+	Name            string `json:"name"`
+	KeyPrefix       string `json:"key_prefix"`
+	CreatedAt       int64  `json:"created_at"`
+	ExpiresAt       *int64 `json:"expires_at"`
+	RevokedAt       *int64 `json:"revoked_at"`
+	RPMLimit        *int   `json:"rpm_limit"`
+	TPMLimit        *int   `json:"tpm_limit"`
+	TotalTokenLimit *int64 `json:"total_token_limit"`
+	LastUsedAt      *int64 `json:"last_used_at"`
+	Status          string `json:"status"`
 
 	TotalRequests         int64 `json:"total_requests"`
 	TotalPromptTokens     int64 `json:"total_prompt_tokens"`
@@ -40,6 +41,10 @@ type liveLimits struct {
 	TPMUsed      int64 `json:"tpm_used"`
 	TPMRemaining int64 `json:"tpm_remaining"`
 	TPMExhausted bool  `json:"tpm_exhausted"`
+	// The lifetime tally, which the limiter owns while the process runs.
+	TotalSpent     int64 `json:"total_spent"`
+	TotalRemaining int64 `json:"total_remaining"`
+	TotalExhausted bool  `json:"total_exhausted"`
 }
 
 func (s *Server) toDTO(k *store.APIKey, now int64) keyDTO {
@@ -48,21 +53,30 @@ func (s *Server) toDTO(k *store.APIKey, now int64) keyDTO {
 		status = reason
 	}
 	d := s.limiter.Peek(k)
+	// The limiter sees a quota run out before the usage writer has folded the
+	// spend into the row, so it has the last word on whether the key is finished.
+	if status == "active" && d.TotalExhausted {
+		status = "exhausted"
+	}
 	return keyDTO{
 		ID: k.ID, Name: k.Name, KeyPrefix: k.KeyPrefix,
 		CreatedAt: k.CreatedAt, ExpiresAt: k.ExpiresAt, RevokedAt: k.RevokedAt,
-		RPMLimit: k.RPMLimit, TPMLimit: k.TPMLimit, LastUsedAt: k.LastUsedAt,
+		RPMLimit: k.RPMLimit, TPMLimit: k.TPMLimit, TotalTokenLimit: k.TotalTokenLimit,
+		LastUsedAt:            k.LastUsedAt,
 		Status:                status,
 		TotalRequests:         k.TotalRequests,
 		TotalPromptTokens:     k.TotalPromptTokens,
 		TotalCompletionTokens: k.TotalCompletionTokens,
 		Live: liveLimits{
-			RPMUsed:      d.RPMUsed,
-			RPMRemaining: d.RPMRemaining,
-			RPMExhausted: d.RPMExhausted,
-			TPMUsed:      d.TPMUsed,
-			TPMRemaining: d.TPMRemaining,
-			TPMExhausted: d.TPMExhausted,
+			RPMUsed:        d.RPMUsed,
+			RPMRemaining:   d.RPMRemaining,
+			RPMExhausted:   d.RPMExhausted,
+			TPMUsed:        d.TPMUsed,
+			TPMRemaining:   d.TPMRemaining,
+			TPMExhausted:   d.TPMExhausted,
+			TotalSpent:     d.TotalSpent,
+			TotalRemaining: d.TotalRemaining,
+			TotalExhausted: d.TotalExhausted,
 		},
 	}
 }
@@ -90,10 +104,11 @@ func (s *Server) handleGetKey(w http.ResponseWriter, r *http.Request) {
 }
 
 type createKeyRequest struct {
-	Name      string `json:"name"`
-	ExpiresAt *int64 `json:"expires_at"`
-	RPMLimit  *int   `json:"rpm_limit"`
-	TPMLimit  *int   `json:"tpm_limit"`
+	Name            string `json:"name"`
+	ExpiresAt       *int64 `json:"expires_at"`
+	RPMLimit        *int   `json:"rpm_limit"`
+	TPMLimit        *int   `json:"tpm_limit"`
+	TotalTokenLimit *int64 `json:"total_token_limit"`
 }
 
 func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +127,7 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "The expiry date is in the past.")
 		return
 	}
-	if msg, ok := validLimits(body.RPMLimit, body.TPMLimit); !ok {
+	if msg, ok := validLimits(body.RPMLimit, body.TPMLimit, body.TotalTokenLimit); !ok {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -125,6 +140,7 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 	k, err := s.st.CreateKey(store.NewKey{
 		Name: body.Name, KeyHash: hash, KeyPrefix: display, CreatedAt: now,
 		ExpiresAt: body.ExpiresAt, RPMLimit: body.RPMLimit, TPMLimit: body.TPMLimit,
+		TotalTokenLimit: body.TotalTokenLimit,
 	})
 	if err != nil {
 		writeServerError(w, err)
@@ -143,14 +159,18 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateKeyRequest struct {
-	Name      *string `json:"name"`
-	ExpiresAt *int64  `json:"expires_at"`
-	RPMLimit  *int    `json:"rpm_limit"`
-	TPMLimit  *int    `json:"tpm_limit"`
+	Name            *string `json:"name"`
+	ExpiresAt       *int64  `json:"expires_at"`
+	RPMLimit        *int    `json:"rpm_limit"`
+	TPMLimit        *int    `json:"tpm_limit"`
+	TotalTokenLimit *int64  `json:"total_token_limit"`
 
-	ClearExpiry   bool `json:"clear_expiry"`
-	ClearRPMLimit bool `json:"clear_rpm_limit"`
-	ClearTPMLimit bool `json:"clear_tpm_limit"`
+	ClearExpiry          bool `json:"clear_expiry"`
+	ClearRPMLimit        bool `json:"clear_rpm_limit"`
+	ClearTPMLimit        bool `json:"clear_tpm_limit"`
+	ClearTotalTokenLimit bool `json:"clear_total_token_limit"`
+	// Puts a key that spent its quota back to work without raising the limit.
+	ResetTokensSpent bool `json:"reset_tokens_spent"`
 }
 
 func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
@@ -196,7 +216,14 @@ func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
 	} else if body.TPMLimit != nil {
 		u.TPMLimit = &body.TPMLimit
 	}
-	if msg, ok := validLimits(body.RPMLimit, body.TPMLimit); !ok {
+	if body.ClearTotalTokenLimit {
+		var none *int64
+		u.TotalTokenLimit = &none
+	} else if body.TotalTokenLimit != nil {
+		u.TotalTokenLimit = &body.TotalTokenLimit
+	}
+	u.ResetTokensSpent = body.ResetTokensSpent
+	if msg, ok := validLimits(body.RPMLimit, body.TPMLimit, body.TotalTokenLimit); !ok {
 		writeError(w, http.StatusBadRequest, msg)
 		return
 	}
@@ -205,6 +232,11 @@ func (s *Server) handleUpdateKey(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeStoreError(w, err)
 		return
+	}
+	// The limiter owns the live tally, so clearing the column alone would leave
+	// the running process still refusing the key.
+	if body.ResetTokensSpent {
+		s.limiter.ResetSpend(k.ID)
 	}
 	if err := s.registry.Reload(); err != nil {
 		writeServerError(w, err)
@@ -243,6 +275,9 @@ func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 		writeStoreError(w, err)
 		return
 	}
+	// SQLite gives the next key the id this one just freed, so the limiter has to
+	// let go of the tally with it or the new key inherits a spent quota.
+	s.limiter.Forget(k.ID)
 	if err := s.registry.Reload(); err != nil {
 		writeServerError(w, err)
 		return
@@ -264,12 +299,15 @@ func (s *Server) lookupPathKey(w http.ResponseWriter, r *http.Request) (*store.A
 	return k, nil
 }
 
-func validLimits(rpm, tpm *int) (string, bool) {
+func validLimits(rpm, tpm *int, total *int64) (string, bool) {
 	if rpm != nil && *rpm < 1 {
 		return "Requests per minute must be at least 1, or left empty for no limit.", false
 	}
 	if tpm != nil && *tpm < 1 {
 		return "Tokens per minute must be at least 1, or left empty for no limit.", false
+	}
+	if total != nil && *total < 1 {
+		return "The total token limit must be at least 1, or left empty for no limit.", false
 	}
 	return "", true
 }

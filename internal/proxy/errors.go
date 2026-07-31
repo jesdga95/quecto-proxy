@@ -82,6 +82,15 @@ func errRevokedKey() *apiError {
 	}
 }
 
+func errExhaustedKey() *apiError {
+	return &apiError{
+		Status:  http.StatusUnauthorized,
+		Message: "That API key has spent its total token allowance and will not be accepted again.",
+		Type:    "invalid_request_error",
+		Code:    "exhausted_api_key",
+	}
+}
+
 func errUpstreamUnreachable() *apiError {
 	return &apiError{
 		Status:  http.StatusBadGateway,

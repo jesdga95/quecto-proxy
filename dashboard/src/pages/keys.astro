@@ -24,20 +24,20 @@ import FormField from "../components/molecules/FormField.astro";
            they refresh and spare width spreads across all six in proportion
            rather than piling onto whichever one was left to absorb it. -->
       <colgroup>
-        <col class="w-[192px]" />
-        <col class="w-[164px]" />
-        <col class="w-[288px]" />
-        <col class="w-[104px]" />
-        <col class="w-[120px]" />
-        <col class="w-[92px]" />
+        <col class="w-[206px]" />
+        <col class="w-[146px]" />
+        <col class="w-[228px]" />
+        <col class="w-[156px]" />
+        <col class="w-[140px]" />
+        <col class="w-[84px]" />
       </colgroup>
       <thead>
         <tr>
           <th>Name</th>
           <th>Key</th>
-          <th>Current usage</th>
-          <th>Expires</th>
-          <th>Last used</th>
+          <th>Limits</th>
+          <th>Status</th>
+          <th>Activity</th>
           <th></th>
         </tr>
       </thead>
@@ -97,7 +97,19 @@ import FormField from "../components/molecules/FormField.astro";
         </FormField>
       </div>
 
-      <span class="text-[11.5px] text-muted">Leave a limit empty for no limit.</span>
+      <FormField label="Total token limit" for="k-total">
+        <input
+          class="input num"
+          id="k-total"
+          inputmode="numeric"
+          placeholder="No limit"
+        />
+      </FormField>
+
+      <span class="text-[11.5px] text-muted">
+        Leave a limit empty for no limit. A key that spends its total token
+        limit stops working for good, until the limit is raised or reset.
+      </span>
       <p id="create-error" hidden class="text-[12.5px] text-crit"></p>
     </div>
 
@@ -160,22 +172,31 @@ import FormField from "../components/molecules/FormField.astro";
     revoke: el("icon-revoke").innerHTML,
     delete: el("icon-delete").innerHTML,
   };
-  const STATUS = { active: "Active", revoked: "Revoked", expired: "Expired" };
+  const STATUS = {
+    active: "Active",
+    revoked: "Revoked",
+    expired: "Expired",
+    exhausted: "Exhausted",
+  };
 
-  /** One rail per limit, reading what the key spent over the last minute against
+  /** One lane per limit, reading what the key spent over the last minute against
    * what it is allowed. A burst bucket admits its burst plus a minute of refill,
-   * so a spend above the limit is real and the rail clamps rather than the number.
+   * so a spend above the limit is real and the lane clamps rather than the number.
    * The colour comes from the bucket, which is the thing that actually refuses.
-   * The fill never drops below a sliver, so an idle rail still reads as a rail. */
-  function meter(
+   * The fill never drops below a sliver, so an idle lane still reads as a lane.
+   *
+   * The three stack rather than sitting side by side, so the same limit lands in
+   * the same place on every row and a column of rpm can be read down the table. */
+  function lane(
     used: number,
     exhausted: boolean,
     limit: number | null,
     unit: string,
     fmt: (n: number) => string,
+    kind = "",
   ): string {
-    let state = "is-idle";
-    let value = `${fmt(used)}/∞`;
+    let state = "is-off";
+    let value = "∞";
     let pct = 2;
 
     if (limit !== null) {
@@ -184,52 +205,63 @@ import FormField from "../components/molecules/FormField.astro";
       state = exhausted ? "is-full" : used === 0 ? "is-idle" : "";
     }
 
-    return `<div class="meter ${state}">
-      <div class="meter-top">
-        <span class="unit">${unit}</span><span class="num">${value}</span>
-      </div>
+    return `<div class="lane ${state} ${kind}">
+      <span class="unit">${unit}</span>
       <div class="rail"><span style="width:${pct}%"></span></div>
+      <span class="num">${value}</span>
     </div>`;
   }
 
-  function usageCell(k: Key): string {
-    if (k.status !== "active") {
-      return `<td class="text-[12.5px] text-muted">
-        <span class="key-label">Current usage</span>${STATUS[k.status]}, no traffic accepted
-      </td>`;
-    }
-    return `<td>
-      <span class="key-label">Current usage</span>
-      <div class="meters">
-        ${meter(k.live.rpm_used, k.live.rpm_exhausted, k.rpm_limit, "rpm", count)}
-        ${meter(k.live.tpm_used, k.live.tpm_exhausted, k.tpm_limit, "tpm", tokensTight)}
+  /** The quota lane gets an inset track rather than a rail, because it is the one
+   * allowance that only empties: the other two refill within the minute. */
+  function limitsCell(k: Key): string {
+    return `<td class="lanes-cell">
+      <span class="key-label">Limits</span>
+      <div class="lanes">
+        ${lane(k.live.rpm_used, k.live.rpm_exhausted, k.rpm_limit, "rpm", count)}
+        ${lane(k.live.tpm_used, k.live.tpm_exhausted, k.tpm_limit, "tpm", tokensTight)}
+        ${lane(k.live.total_spent, k.live.total_exhausted, k.total_token_limit, "total", tokensTight, "is-quota")}
       </div>
     </td>`;
   }
 
-  /** Ranked, so being refused outranks lapsing when a key is doing both. */
-  function stateDot(k: Key): string {
-    let tone = "bg-ok";
+  /** Ranked, so being refused outranks lapsing when a key is doing both. The word
+   * carries its own colour and nothing is drawn around it, so only what needs
+   * attention is tinted and a healthy key stays quiet. It states the state and
+   * stops there: what to do about it does not belong in a cell that refreshes. */
+  function statusCell(k: Key): string {
+    let tone = "text-muted";
     let label = "Active";
-    if (k.status !== "active") {
-      tone = "bg-muted";
+
+    if (k.status === "exhausted") {
+      // A spent quota is a key that just died, not one retired on purpose.
+      tone = "text-crit font-medium";
+      label = "Exhausted";
+    } else if (k.status !== "active") {
       label = STATUS[k.status];
     } else if (k.live.rpm_exhausted || k.live.tpm_exhausted) {
-      tone = "bg-crit";
+      tone = "text-crit font-medium";
       label = "Rate limited";
     } else if (k.expires_at && daysUntil(k.expires_at) <= 7) {
-      tone = "bg-warn";
+      tone = "text-warn font-medium";
       label = "Expires soon";
     }
-    return `<span class="size-[6px] shrink-0 rounded-full ${tone}" title="${label}"></span>
-      <span class="sr-only">${label}</span>`;
+
+    return `<td>
+      <span class="key-label">Status</span>
+      <div class="text-[12.5px] ${tone}">${label}</div>
+    </td>`;
   }
 
-  /** Tinted while an active key is within a week of lapsing. */
-  function expiry(k: Key): string {
-    if (!k.expires_at) return `<span class="text-muted">Never</span>`;
-    const soon = k.status === "active" && daysUntil(k.expires_at) <= 7;
-    return `<span class="${soon ? "text-warn" : "text-muted"}">${esc(date(k.expires_at))}</span>`;
+  /** When it was last used, over when it lapses. The status column carries the
+   * warning for a key that is about to, so the date itself stays quiet. */
+  function activityCell(k: Key): string {
+    const expires = k.expires_at ? esc(date(k.expires_at)) : "never";
+    return `<td class="text-[12px]">
+      <span class="key-label">Activity</span>
+      <div class="text-ink-2">${esc(ago(k.last_used_at))}</div>
+      <div class="text-[11.5px] text-muted">Expires ${expires}</div>
+    </td>`;
   }
 
   function actions(k: Key): string {
@@ -246,27 +278,24 @@ import FormField from "../components/molecules/FormField.astro";
     </td>`;
   }
 
+  /** Retired keys step back. A spent quota does not: it is a key that just
+   * stopped working rather than one taken out of service on purpose. */
   function row(k: Key): string {
-    return `<tr class="${k.status === "active" ? "" : "opacity-60"}" data-id="${k.id}">
+    const retired = k.status === "revoked" || k.status === "expired";
+    return `<tr class="${retired ? "opacity-60" : ""}" data-id="${k.id}">
       <td>
-        <div class="flex items-center gap-2.5">
-          ${stateDot(k)}
-          <span
-            class="min-w-0 truncate font-medium"
-            title="Created ${esc(date(k.created_at))}"
-          >${esc(k.name)}</span>
-        </div>
+        <span
+          class="block truncate font-medium"
+          title="Created ${esc(date(k.created_at))}"
+        >${esc(k.name)}</span>
       </td>
       <td>
         <span class="key-label">Key</span>
         <span class="mono-chip whitespace-nowrap">${esc(k.key_prefix)}</span>
       </td>
-      ${usageCell(k)}
-      <td class="text-[12px]"><span class="key-label">Expires</span>${expiry(k)}</td>
-      <td class="text-[12px]">
-        <span class="key-label">Last used</span>
-        <span class="text-muted">${esc(ago(k.last_used_at))}</span>
-      </td>
+      ${limitsCell(k)}
+      ${statusCell(k)}
+      ${activityCell(k)}
       ${actions(k)}
     </tr>`;
   }
@@ -304,6 +333,9 @@ import FormField from "../components/molecules/FormField.astro";
     (el("ack") as HTMLInputElement).checked = false;
     (el("finish") as HTMLButtonElement).disabled = true;
     (el("k-name") as HTMLInputElement).value = "";
+    // Cleared rather than left behind, so a quota typed and then abandoned does
+    // not quietly attach itself to the next key.
+    (el("k-total") as HTMLInputElement).value = "";
     (el("k-name") as HTMLInputElement).focus();
   }
 
@@ -348,6 +380,7 @@ import FormField from "../components/molecules/FormField.astro";
         expires_at: days === 0 ? null : Math.floor(Date.now() / 1000) + days * 86400,
         rpm_limit: limitValue("k-rpm"),
         tpm_limit: limitValue("k-tpm"),
+        total_token_limit: limitValue("k-total"),
       });
       el("new-key").textContent = created.secret;
       el("step-form").hidden = true;

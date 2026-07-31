@@ -143,10 +143,17 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	res, decision := p.limiter.Admit(key, int64(info.MaxTokens))
 	decision.ApplyHeaders(w.Header())
 	if !decision.Allowed {
-		w.Header().Set("Retry-After", strconv.Itoa(decision.RetryAfterSeconds()))
-		errRateLimited(decision).write(w)
+		// A spent quota answers like the other terminal key states. Telling a
+		// client to retry would send it into a backoff loop it never gets out of.
+		apiErr := errRateLimited(decision)
+		if decision.Reason == "quota" {
+			apiErr = errExhaustedKey()
+		} else {
+			w.Header().Set("Retry-After", strconv.Itoa(decision.RetryAfterSeconds()))
+		}
+		apiErr.write(w)
 		p.report(Record{
-			KeyID: key.ID, Model: info.Model, Status: http.StatusTooManyRequests,
+			KeyID: key.ID, Model: info.Model, Status: apiErr.Status,
 			Stream: info.Stream, Duration: p.now().Sub(start),
 		})
 		return
@@ -275,6 +282,8 @@ func (p *Proxy) authenticate(r *http.Request) (*store.APIKey, *apiError) {
 			return nil, errExpiredKey()
 		case "revoked":
 			return nil, errRevokedKey()
+		case "exhausted":
+			return nil, errExhaustedKey()
 		default:
 			return nil, errInvalidKey()
 		}

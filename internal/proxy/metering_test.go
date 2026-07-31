@@ -50,7 +50,17 @@ func (r *rig) setLimits(rpm, tpm *int) {
 	r.registry.Reload()
 }
 
+func (r *rig) setQuota(total *int64) {
+	r.t.Helper()
+	if _, err := r.st.UpdateKey(1, store.KeyUpdate{TotalTokenLimit: &total}); err != nil {
+		r.t.Fatalf("set quota: %v", err)
+	}
+	r.registry.Reload()
+}
+
 func intp(v int) *int { return &v }
+
+func intp64(v int64) *int64 { return &v }
 
 func TestInjectsUsageRequestAndStripsTheExtraFrame(t *testing.T) {
 	r := newRig(t, nullupstream.DefaultOptions())
@@ -220,6 +230,68 @@ func TestRequestLimitReturns429WithHeaders(t *testing.T) {
 	}
 	if !bytes.Contains(body, []byte(`"type":"rate_limit_error"`)) {
 		t.Errorf("error type is not OpenAI shaped: %s", body)
+	}
+}
+
+func TestSpentQuotaKillsTheKeyWithoutARetryHint(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens = 400
+	opts.CompletionTokens = 400
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+	r.setQuota(intp64(600))
+
+	// One reply costs 800, so the first call through spends the whole quota.
+	resp := r.post("/v1/chat/completions", `{"model":"m","max_tokens":10}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first request = %d, want 200", resp.StatusCode)
+	}
+
+	resp = r.post("/v1/chat/completions", `{"model":"m","max_tokens":10}`, r.secret)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("second request = %d, want 401 rather than a retryable 429", resp.StatusCode)
+	}
+	if !bytes.Contains(body, []byte("exhausted_api_key")) {
+		t.Fatalf("body = %s", body)
+	}
+	// A retry hint would send the client into a backoff loop it never leaves.
+	if got := resp.Header.Get("Retry-After"); got != "" {
+		t.Errorf("Retry-After = %q on a key that will never be accepted again", got)
+	}
+	if len(r.upstream.Requests()) != 1 {
+		t.Fatalf("upstream saw %d requests, the refused one should not have been forwarded", len(r.upstream.Requests()))
+	}
+	if last, _ := rec.last(); last.Status != http.StatusUnauthorized {
+		t.Errorf("recorded status = %d, want the 401 that was served", last.Status)
+	}
+}
+
+func TestQuotaSpentInAnEarlierRunIsRefusedAtTheDoor(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	// A key row the usage writer already took to its limit, as a restart finds it.
+	r.setQuota(intp64(1000))
+	if _, err := r.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
+		t.Fatalf("seed spend: %v", err)
+	}
+	r.registry.Reload()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m"}`, r.secret)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	if !bytes.Contains(body, []byte("exhausted_api_key")) {
+		t.Fatalf("body = %s", body)
+	}
+	if len(r.upstream.Requests()) != 0 {
+		t.Fatal("a key with no quota left reached the upstream")
 	}
 }
 

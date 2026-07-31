@@ -8,10 +8,16 @@ CREATE TABLE api_keys (
   revoked_at   INTEGER,
   rpm_limit    INTEGER,
   tpm_limit    INTEGER,
+  -- A lifetime allowance that never refills. Once tokens_spent reaches it the
+  -- key is dead until the limit is raised or cleared.
+  total_token_limit INTEGER,
   last_used_at INTEGER,
   total_requests          INTEGER NOT NULL DEFAULT 0,
   total_prompt_tokens     INTEGER NOT NULL DEFAULT 0,
-  total_completion_tokens INTEGER NOT NULL DEFAULT 0
+  total_completion_tokens INTEGER NOT NULL DEFAULT 0,
+  -- Kept apart from the reporting totals so a quota can be reset without
+  -- rewriting usage history.
+  tokens_spent            INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE request_log (

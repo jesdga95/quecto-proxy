@@ -4,7 +4,7 @@
 
 ---
 
-A tiny proxy for safely exposing a self-hosted OpenAI-compatible LLM server to the internet. API keys with expiration, per-key limits on **requests and tokens**, and metadata-only usage logs, behind a small dashboard.
+A tiny proxy for safely exposing a self-hosted OpenAI-compatible LLM server to the internet. API keys with expiration, per-key limits on **requests and tokens**, lifetime token quotas, and metadata-only usage logs, behind a small dashboard.
 
 One 11MB static binary, one SQLite file, nothing else.
 
@@ -143,6 +143,10 @@ Everything but the listen address and database path is also editable from the da
 ## The part that will surprise you
 
 A request's token cost is only knowable *after* it finishes, so token limits reserve on admission and settle on completion. **The bucket is allowed to go negative.** One reply larger than the whole per-minute allowance overdraws that key, locking it out until the balance climbs back above zero. Clamping at zero would make oversized requests free. The dashboard marks the key rate limited while that lasts.
+
+A key can also carry a **total token limit**, a lifetime allowance that never refills. Spending it is terminal: the key answers `401 exhausted_api_key` from then on, alongside expired and revoked, rather than a `429` that would send an SDK into a backoff loop it never leaves. Raising the limit or resetting the key's tally puts it back to work.
+
+**The quota counts settled tokens only, never the reservation.** `max_tokens` is a ceiling a caller picks, routinely an order of magnitude above what a reply costs; holding it against an allowance that never refills would spend the lot the moment a long reply started, and a quota smaller than `max_tokens` could never be used at all. So a call in flight holds none of the quota, and calls admitted together can take it past its limit between them. That is the same overshoot the per-minute bucket already allows, traded for not killing a key that has spent almost nothing.
 
 To count tokens on streamed replies, Quecto adds `stream_options` to the upstream request and strips the resulting usage frame back out, so callers see a byte stream identical to talking to the model directly. Servers that reject the field are detected on first refusal and fall back. Responses carry OpenAI's own `X-RateLimit-*` headers, so SDK backoff logic works unchanged.
 

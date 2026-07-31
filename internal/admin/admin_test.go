@@ -254,6 +254,83 @@ func TestExpiredKeyReportsExpired(t *testing.T) {
 	}
 }
 
+func TestSpentQuotaReportsExhaustedAndResetRevivesIt(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("POST", "/admin/api/keys", map[string]any{
+		"name": "capped", "total_token_limit": 1000,
+	}, c)
+	if got := decodeBody[struct {
+		Key keyDTO `json:"key"`
+	}](t, rec).Key; got.TotalTokenLimit == nil || *got.TotalTokenLimit != 1000 {
+		t.Fatalf("created key limit = %v, want 1000", got.TotalTokenLimit)
+	}
+
+	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
+		t.Fatalf("seed spend: %v", err)
+	}
+	got := decodeBody[keyDTO](t, h.do("GET", "/admin/api/keys/1", nil, c))
+	if got.Status != "exhausted" {
+		t.Fatalf("status = %q, want exhausted", got.Status)
+	}
+
+	rec = h.do("PATCH", "/admin/api/keys/1", map[string]any{"reset_tokens_spent": true}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset = %d, body %s", rec.Code, rec.Body)
+	}
+	got = decodeBody[keyDTO](t, rec)
+	if got.Status != "active" {
+		t.Fatalf("status after the reset = %q, want active", got.Status)
+	}
+	if got.Live.TotalRemaining != 1000 {
+		t.Fatalf("remaining after the reset = %d, want the whole quota back", got.Live.TotalRemaining)
+	}
+}
+
+// SQLite hands the next key the id a deleted one gave up, so a quota left in the
+// limiter would be inherited by a key that never spent a token of it.
+func TestDeletedKeyLeavesNoQuotaBehindForItsSuccessor(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	h.do("POST", "/admin/api/keys", map[string]any{"name": "first", "total_token_limit": 1000}, c)
+	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
+		t.Fatalf("seed spend: %v", err)
+	}
+	if got := decodeBody[keyDTO](t, h.do("GET", "/admin/api/keys/1", nil, c)); got.Status != "exhausted" {
+		t.Fatalf("status = %q, want exhausted before the delete", got.Status)
+	}
+
+	if rec := h.do("DELETE", "/admin/api/keys/1", nil, c); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d, body %s", rec.Code, rec.Body)
+	}
+
+	rec := h.do("POST", "/admin/api/keys", map[string]any{"name": "second", "total_token_limit": 1000}, c)
+	got := decodeBody[struct {
+		Key keyDTO `json:"key"`
+	}](t, rec).Key
+	if got.ID != 1 {
+		t.Skipf("the new key took id %d, so this build does not recycle ids", got.ID)
+	}
+	if got.Status != "active" {
+		t.Fatalf("a fresh key on a recycled id reads %q, want active", got.Status)
+	}
+	if got.Live.TotalSpent != 0 || got.Live.TotalRemaining != 1000 {
+		t.Fatalf("fresh key inherited spend=%d remaining=%d", got.Live.TotalSpent, got.Live.TotalRemaining)
+	}
+}
+
+func TestQuotaLimitMustBePositive(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("POST", "/admin/api/keys", map[string]any{"name": "k", "total_token_limit": 0}, c)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create with a zero quota = %d, want 400", rec.Code)
+	}
+}
+
 func TestUpdateClearsLimitsAndExpiry(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
@@ -261,16 +338,18 @@ func TestUpdateClearsLimitsAndExpiry(t *testing.T) {
 	exp := time.Now().Add(24 * time.Hour).Unix()
 	h.do("POST", "/admin/api/keys", map[string]any{
 		"name": "k", "expires_at": exp, "rpm_limit": 10, "tpm_limit": 20,
+		"total_token_limit": 5000,
 	}, c)
 
 	rec := h.do("PATCH", "/admin/api/keys/1", map[string]any{
 		"clear_expiry": true, "clear_rpm_limit": true, "clear_tpm_limit": true,
+		"clear_total_token_limit": true,
 	}, c)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch = %d, body %s", rec.Code, rec.Body)
 	}
 	got := decodeBody[keyDTO](t, rec)
-	if got.ExpiresAt != nil || got.RPMLimit != nil || got.TPMLimit != nil {
+	if got.ExpiresAt != nil || got.RPMLimit != nil || got.TPMLimit != nil || got.TotalTokenLimit != nil {
 		t.Fatalf("clears did not apply: %+v", got)
 	}
 }

@@ -7,8 +7,9 @@ export interface Key {
   revoked_at: number | null;
   rpm_limit: number | null;
   tpm_limit: number | null;
+  total_token_limit: number | null;
   last_used_at: number | null;
-  status: "active" | "expired" | "revoked";
+  status: "active" | "expired" | "revoked" | "exhausted";
   total_requests: number;
   total_prompt_tokens: number;
   total_completion_tokens: number;
@@ -19,6 +20,9 @@ export interface Key {
     tpm_used: number;
     tpm_remaining: number;
     tpm_exhausted: boolean;
+    total_spent: number;
+    total_remaining: number;
+    total_exhausted: boolean;
   };
 }
 
@@ -152,6 +156,7 @@ export const api = {
     expires_at: number | null;
     rpm_limit: number | null;
     tpm_limit: number | null;
+    total_token_limit: number | null;
   }) =>
     request<{ key: Key; secret: string }>("/keys", {
       method: "POST",

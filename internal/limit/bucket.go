@@ -54,13 +54,15 @@ func (r *Reservation) Settle(actual int64) {
 	if actual < 0 {
 		actual = 0
 	}
-	r.limiter.settle(r.keyID, r.reserved-actual, actual)
+	r.limiter.settle(r.keyID, r.reserved, actual)
 }
 
-// settle returns the unused part of a reservation and records what the request
-// really spent. The tally is kept for every key, including unlimited ones, so
-// the dashboard can show a rate even where nothing is being enforced.
-func (l *Limiter) settle(keyID int64, refund, actual int64) {
+// settle swaps a reservation for the real token count: the unused part goes back
+// to the per minute bucket and the lifetime tally takes the real cost, which is
+// the only thing it ever counts. Both tallies are kept for every key, including
+// unlimited ones, so the dashboard can show a rate even where nothing is being
+// enforced.
+func (l *Limiter) settle(keyID int64, reserved, actual int64) {
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -69,11 +71,13 @@ func (l *Limiter) settle(keyID int64, refund, actual int64) {
 		return
 	}
 	s.used.add(now, 0, actual)
+	s.spent += actual
+
 	if s.tpm == nil || s.tpmLimit == nil {
 		return
 	}
 	max := float64(*s.tpmLimit)
-	s.tpm.balance += float64(refund)
+	s.tpm.balance += float64(reserved - actual)
 	if s.tpm.balance > max {
 		s.tpm.balance = max
 	}

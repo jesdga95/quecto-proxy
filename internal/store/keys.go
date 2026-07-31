@@ -10,23 +10,27 @@ import (
 var ErrKeyNotFound = errors.New("key not found")
 
 type APIKey struct {
-	ID         int64
-	Name       string
-	KeyHash    []byte
-	KeyPrefix  string
-	CreatedAt  int64
-	ExpiresAt  *int64
-	RevokedAt  *int64
-	RPMLimit   *int
-	TPMLimit   *int
-	LastUsedAt *int64
+	ID              int64
+	Name            string
+	KeyHash         []byte
+	KeyPrefix       string
+	CreatedAt       int64
+	ExpiresAt       *int64
+	RevokedAt       *int64
+	RPMLimit        *int
+	TPMLimit        *int
+	TotalTokenLimit *int64
+	LastUsedAt      *int64
 
 	TotalRequests         int64
 	TotalPromptTokens     int64
 	TotalCompletionTokens int64
+	TokensSpent           int64
 }
 
 // Status reports whether the key may be used, and why not when it may not.
+// A spent quota is terminal like the other two: it does not come back on its
+// own, so callers are told the key is finished rather than asked to retry.
 func (k *APIKey) Status(now int64) (ok bool, reason string) {
 	if k.RevokedAt != nil {
 		return false, "revoked"
@@ -34,12 +38,15 @@ func (k *APIKey) Status(now int64) (ok bool, reason string) {
 	if k.ExpiresAt != nil && *k.ExpiresAt <= now {
 		return false, "expired"
 	}
+	if k.TotalTokenLimit != nil && k.TokensSpent >= *k.TotalTokenLimit {
+		return false, "exhausted"
+	}
 	return true, ""
 }
 
 const keyColumns = `id, name, key_hash, key_prefix, created_at, expires_at, revoked_at,
-	rpm_limit, tpm_limit, last_used_at,
-	total_requests, total_prompt_tokens, total_completion_tokens`
+	rpm_limit, tpm_limit, total_token_limit, last_used_at,
+	total_requests, total_prompt_tokens, total_completion_tokens, tokens_spent`
 
 func scanKey(row interface{ Scan(...any) error }) (*APIKey, error) {
 	var (
@@ -47,12 +54,13 @@ func scanKey(row interface{ Scan(...any) error }) (*APIKey, error) {
 		expires    sql.NullInt64
 		revoked    sql.NullInt64
 		rpm, tpm   sql.NullInt64
+		total      sql.NullInt64
 		lastUsedAt sql.NullInt64
 	)
 	err := row.Scan(
 		&k.ID, &k.Name, &k.KeyHash, &k.KeyPrefix, &k.CreatedAt, &expires, &revoked,
-		&rpm, &tpm, &lastUsedAt,
-		&k.TotalRequests, &k.TotalPromptTokens, &k.TotalCompletionTokens,
+		&rpm, &tpm, &total, &lastUsedAt,
+		&k.TotalRequests, &k.TotalPromptTokens, &k.TotalCompletionTokens, &k.TokensSpent,
 	)
 	if err != nil {
 		return nil, err
@@ -70,6 +78,9 @@ func scanKey(row interface{ Scan(...any) error }) (*APIKey, error) {
 	if tpm.Valid {
 		n := int(tpm.Int64)
 		k.TPMLimit = &n
+	}
+	if total.Valid {
+		k.TotalTokenLimit = &total.Int64
 	}
 	if lastUsedAt.Valid {
 		k.LastUsedAt = &lastUsedAt.Int64
@@ -107,20 +118,22 @@ func (s *Store) GetKey(id int64) (*APIKey, error) {
 }
 
 type NewKey struct {
-	Name      string
-	KeyHash   []byte
-	KeyPrefix string
-	CreatedAt int64
-	ExpiresAt *int64
-	RPMLimit  *int
-	TPMLimit  *int
+	Name            string
+	KeyHash         []byte
+	KeyPrefix       string
+	CreatedAt       int64
+	ExpiresAt       *int64
+	RPMLimit        *int
+	TPMLimit        *int
+	TotalTokenLimit *int64
 }
 
 func (s *Store) CreateKey(n NewKey) (*APIKey, error) {
 	res, err := s.DB.Exec(
-		`INSERT INTO api_keys (name, key_hash, key_prefix, created_at, expires_at, rpm_limit, tpm_limit)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		n.Name, n.KeyHash, n.KeyPrefix, n.CreatedAt, nullInt64(n.ExpiresAt), nullInt(n.RPMLimit), nullInt(n.TPMLimit),
+		`INSERT INTO api_keys (name, key_hash, key_prefix, created_at, expires_at, rpm_limit, tpm_limit, total_token_limit)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		n.Name, n.KeyHash, n.KeyPrefix, n.CreatedAt, nullInt64(n.ExpiresAt),
+		nullInt(n.RPMLimit), nullInt(n.TPMLimit), nullInt64(n.TotalTokenLimit),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create key: %w", err)
@@ -133,15 +146,19 @@ func (s *Store) CreateKey(n NewKey) (*APIKey, error) {
 }
 
 type KeyUpdate struct {
-	Name      *string
-	ExpiresAt **int64
-	RPMLimit  **int
-	TPMLimit  **int
+	Name            *string
+	ExpiresAt       **int64
+	RPMLimit        **int
+	TPMLimit        **int
+	TotalTokenLimit **int64
+	// Set to clear the lifetime tally, which revives a key that spent its quota
+	// without disturbing the usage history the dashboard reports.
+	ResetTokensSpent bool
 }
 
 func (s *Store) UpdateKey(id int64, u KeyUpdate) (*APIKey, error) {
-	sets := make([]string, 0, 4)
-	args := make([]any, 0, 5)
+	sets := make([]string, 0, 6)
+	args := make([]any, 0, 7)
 	if u.Name != nil {
 		sets = append(sets, "name = ?")
 		args = append(args, *u.Name)
@@ -157,6 +174,13 @@ func (s *Store) UpdateKey(id int64, u KeyUpdate) (*APIKey, error) {
 	if u.TPMLimit != nil {
 		sets = append(sets, "tpm_limit = ?")
 		args = append(args, nullInt(*u.TPMLimit))
+	}
+	if u.TotalTokenLimit != nil {
+		sets = append(sets, "total_token_limit = ?")
+		args = append(args, nullInt64(*u.TotalTokenLimit))
+	}
+	if u.ResetTokensSpent {
+		sets = append(sets, "tokens_spent = 0")
 	}
 	if len(sets) == 0 {
 		return s.GetKey(id)
