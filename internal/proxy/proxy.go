@@ -140,11 +140,13 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, decision := p.limiter.Admit(key, int64(info.MaxTokens))
+	res, decision := p.limiter.Admit(key, info.estimate())
 	decision.ApplyHeaders(w.Header())
 	if !decision.Allowed {
 		// A spent quota answers like the other terminal key states. Telling a
 		// client to retry would send it into a backoff loop it never gets out of.
+		// A quota merely held by calls in flight is the opposite: retryable, and
+		// answered as a rate limit like every other refusal that clears itself.
 		apiErr := errRateLimited(decision)
 		if decision.Reason == "quota" {
 			apiErr = errExhaustedKey()

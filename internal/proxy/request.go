@@ -40,6 +40,14 @@ type requestInfo struct {
 	Body []byte
 }
 
+// estimate is what the call is held against until the real cost is known: the
+// reply cannot pass max_tokens, and the prompt is read off the body at a
+// deliberately tight three bytes a token. Charging only max_tokens would leave
+// every prompt out of the hold, which is most of the cost of a short reply.
+func (i *requestInfo) estimate() int64 {
+	return int64(len(i.Body)/3 + i.MaxTokens)
+}
+
 // inspectBody reads the request body and reports what the proxy needs from it.
 // A body that is not JSON is passed through untouched.
 func inspectBody(r *http.Request, defaultMaxTokens int) (*requestInfo, error) {

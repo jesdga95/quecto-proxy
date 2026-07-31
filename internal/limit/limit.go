@@ -14,7 +14,8 @@ import (
 // to describe the current allowance to the caller.
 type Decision struct {
 	Allowed bool
-	// Set when Allowed is false: "requests" or "tokens".
+	// Set when Allowed is false: "requests", "tokens", "quota" or "quota_pending".
+	// Only "quota" is terminal; the rest clear on their own.
 	Reason     string
 	RetryAfter time.Duration
 
@@ -53,6 +54,9 @@ type keyState struct {
 
 	totalLimit *int64
 	spent      int64
+	// What calls still in flight have promised to spend. It is refunded at settle,
+	// so it only ever covers replies that are still running.
+	held int64
 	// The lifetime tally is seeded from the key row once and then owned here, so
 	// a registry reload part way through a batch cannot rewind it.
 	seeded bool
@@ -110,7 +114,7 @@ func (l *Limiter) state(k *store.APIKey, now time.Time, touch bool) *keyState {
 }
 
 // Admit consumes one request from the RPM bucket and reserves tokens against
-// the TPM bucket. A refused request consumes nothing.
+// the TPM bucket and the lifetime quota. A refused request consumes nothing.
 func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision) {
 	now := l.now()
 	if reserve < 0 {
@@ -123,13 +127,27 @@ func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision)
 
 	d := Decision{Allowed: true, RPMLimit: s.rpmLimit, TPMLimit: s.tpmLimit, TotalLimit: s.totalLimit}
 
-	// The quota goes first because it is the one refusal that never clears on its
-	// own, so there is no point reporting a retry hint from a refilling bucket.
-	if s.totalLimit != nil && s.spent >= *s.totalLimit {
-		d.Allowed = false
-		d.Reason = "quota"
-		l.fill(&d, s, now)
-		return nil, d
+	// The quota goes first so that a key which is finished says so, rather than
+	// being handed a retry hint from a bucket that will refill for nothing.
+	var hold int64
+	if s.totalLimit != nil {
+		avail := *s.totalLimit - s.spent - s.held
+		if avail <= 0 {
+			d.Allowed = false
+			// Spending past the ceiling ends the key. Room that calls in flight are
+			// only holding comes back as they settle, so that refusal is a wait and
+			// must not read as terminal. There is no telling when a reply will finish,
+			// so it carries no hint and the caller gets the one second floor.
+			d.Reason = "quota"
+			if s.spent < *s.totalLimit {
+				d.Reason = "quota_pending"
+			}
+			l.fill(&d, s, now)
+			return nil, d
+		}
+		// Clamped to what is left, so a max_tokens larger than the whole quota
+		// cannot refuse the key outright. The last call through overshoots instead.
+		hold = min(reserve, avail)
 	}
 
 	// Check the token bucket before spending a request, so a refusal is free.
@@ -154,14 +172,15 @@ func (l *Limiter) Admit(k *store.APIKey, reserve int64) (*Reservation, Decision)
 
 	s.used.add(now, 1, 0)
 
-	// Only the refilling bucket holds the reserve, because only it gets the
-	// unused part back within seconds. Charging max_tokens against a quota that
-	// never refills would spend the whole allowance the moment a long reply
-	// started, and the key would read exhausted for as long as it ran.
+	// Both rails hold the estimate for as long as the reply runs and get the
+	// unused part back at settle. Without a hold, calls admitted together each
+	// measure themselves against a tally none of them has moved yet, and take the
+	// allowance past its limit by as many replies as the upstream runs at once.
 	if s.tpm != nil {
 		s.tpm.balance -= float64(reserve)
 	}
-	res := &Reservation{limiter: l, keyID: k.ID, reserved: reserve}
+	s.held += hold
+	res := &Reservation{limiter: l, keyID: k.ID, reserved: reserve, held: hold}
 
 	l.fill(&d, s, now)
 	return res, d
@@ -182,7 +201,10 @@ func (l *Limiter) fill(d *Decision, s *keyState, now time.Time) {
 	d.RPMUsed, d.TPMUsed = s.used.sum(now)
 	d.TotalSpent = s.spent
 	if s.totalLimit != nil {
-		d.TotalRemaining = max(0, *s.totalLimit-s.spent)
+		// Remaining nets out what calls in flight are holding, so nothing advertises
+		// room already promised. Spent and exhausted stay settled only: a key part
+		// way through a reply has spent nothing yet and must not read as dead.
+		d.TotalRemaining = max(0, *s.totalLimit-s.spent-s.held)
 		d.TotalExhausted = s.spent >= *s.totalLimit
 	}
 	if s.rpm != nil {

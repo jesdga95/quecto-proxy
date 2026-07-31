@@ -402,6 +402,11 @@ func TestTheLastCallOverdrawsTheQuotaAndEndsIt(t *testing.T) {
 	if !d.Allowed {
 		t.Fatal("refused while 100 tokens of quota were still unspent")
 	}
+	// The clamped hold takes the last 100, so nothing queues up behind it: the
+	// overshoot is one reply's worth rather than one for every call in flight.
+	if _, d := l.Admit(k, 5000); d.Allowed {
+		t.Fatal("a second call was admitted against the last 100 the first one holds")
+	}
 	res.Settle(4000)
 
 	peek := l.Peek(k)
@@ -416,10 +421,8 @@ func TestTheLastCallOverdrawsTheQuotaAndEndsIt(t *testing.T) {
 	}
 }
 
-// The quota counts settled tokens only. max_tokens is a ceiling a caller can set
-// far above what a reply costs, and holding it against an allowance that never
-// refills would spend the lot the moment a long reply started: the key would read
-// exhausted for as long as it ran and refuse everything else terminally.
+// The quota tallies settled tokens only. The estimate is a ceiling held while the
+// reply runs, never a price: whatever it did not cost comes back.
 func TestQuotaCountsWhatWasSpentNotWhatWasReserved(t *testing.T) {
 	l, _ := clocked()
 	k := quotaKey(1, 3000, 0)
@@ -431,13 +434,10 @@ func TestQuotaCountsWhatWasSpentNotWhatWasReserved(t *testing.T) {
 	if d.TotalSpent != 0 {
 		t.Fatalf("spent while the reply is still running = %d, want 0", d.TotalSpent)
 	}
-	if peek := l.Peek(k); peek.TotalExhausted || peek.TotalRemaining != 3000 {
+	// Nothing is spent yet, so the key is not exhausted, but the quota is all
+	// promised to the call in flight and has nothing left to advertise.
+	if peek := l.Peek(k); peek.TotalExhausted || peek.TotalRemaining != 0 {
 		t.Fatalf("a key mid reply reads exhausted=%v remaining=%d", peek.TotalExhausted, peek.TotalRemaining)
-	}
-	// A second call arriving while the first is still streaming is admitted, since
-	// nothing has been spent yet.
-	if _, d := l.Admit(k, 30_000); !d.Allowed {
-		t.Fatal("a concurrent call was refused against a quota nothing had touched")
 	}
 
 	res.Settle(2844)
@@ -446,13 +446,52 @@ func TestQuotaCountsWhatWasSpentNotWhatWasReserved(t *testing.T) {
 		t.Fatalf("spent = %d, want the real cost of 2844", peek.TotalSpent)
 	}
 	if peek.TotalRemaining != 156 {
-		t.Fatalf("remaining = %d, want 156", peek.TotalRemaining)
+		t.Fatalf("remaining = %d, want 156 handed back by the settle", peek.TotalRemaining)
 	}
 }
 
-// The per minute bucket keeps its reserve, because it gets the unused part back
-// within seconds and it is what stops calls in flight oversubscribing a rate.
-func TestTPMStillHoldsTheReserveWhileTheQuotaDoesNot(t *testing.T) {
+// Calls admitted together each hold their estimate, so the quota is promised out
+// once rather than once per reply the upstream happens to be running.
+func TestConcurrentCallsCannotOversubscribeTheQuota(t *testing.T) {
+	l, _ := clocked()
+	k := quotaKey(1, 3000, 0)
+
+	// Two whole estimates fit, then the last 600 goes to a third call on a clamped
+	// hold, and there is nothing left for a fourth.
+	held := []*Reservation{}
+	for n := 0; n < 3; n++ {
+		res, d := l.Admit(k, 1200)
+		if !d.Allowed {
+			t.Fatalf("call %d refused with %d of the quota still unpromised", n+1, d.TotalRemaining)
+		}
+		held = append(held, res)
+	}
+	_, d := l.Admit(k, 1200)
+	if d.Allowed {
+		t.Fatal("a fourth call was admitted against a quota already promised away")
+	}
+	if d.Reason != "quota_pending" {
+		t.Fatalf("reason = %q, want quota_pending rather than the terminal one", d.Reason)
+	}
+	if d.TotalExhausted || d.TotalSpent != 0 {
+		t.Fatalf("a quota merely held reads exhausted=%v spent=%d", d.TotalExhausted, d.TotalSpent)
+	}
+
+	for _, res := range held {
+		res.Settle(400)
+	}
+	if peek := l.Peek(k); peek.TotalSpent != 1200 || peek.TotalRemaining != 1800 {
+		t.Fatalf("after settling: spent=%d remaining=%d, the holds were not released",
+			peek.TotalSpent, peek.TotalRemaining)
+	}
+	if _, d := l.Admit(k, 1200); !d.Allowed {
+		t.Fatal("refused once the replies had settled well under their estimates")
+	}
+}
+
+// Both rails hold the estimate while the reply runs, but only the per minute
+// balance shows it as spent. The quota's tally waits for the real cost.
+func TestBothRailsHoldTheEstimateWhileTheReplyRuns(t *testing.T) {
 	l, _ := clocked()
 	k := quotaKey(1, 100_000, 0)
 	k.TPMLimit = i(1000)
@@ -467,6 +506,9 @@ func TestTPMStillHoldsTheReserveWhileTheQuotaDoesNot(t *testing.T) {
 	if d.TotalSpent != 0 {
 		t.Fatalf("quota spent while 800 is in flight = %d, want 0", d.TotalSpent)
 	}
+	if d.TotalRemaining != 99_200 {
+		t.Fatalf("quota remaining while 800 is in flight = %d, want 99200", d.TotalRemaining)
+	}
 
 	res.Settle(100)
 	peek := l.Peek(k)
@@ -475,6 +517,9 @@ func TestTPMStillHoldsTheReserveWhileTheQuotaDoesNot(t *testing.T) {
 	}
 	if peek.TotalSpent != 100 {
 		t.Fatalf("quota spent after settling 100 = %d, want 100", peek.TotalSpent)
+	}
+	if peek.TotalRemaining != 99_900 {
+		t.Fatalf("quota remaining after settling 100 = %d, want 99900", peek.TotalRemaining)
 	}
 }
 

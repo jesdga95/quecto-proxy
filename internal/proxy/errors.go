@@ -119,6 +119,9 @@ func errRateLimited(d limit.Decision) *apiError {
 	case "tokens":
 		msg = "Rate limit reached: this API key has used its token allowance. It becomes usable again as the allowance refills."
 		code = "tokens_rate_limit_exceeded"
+	case "quota_pending":
+		msg = "What is left of this API key's total token allowance is committed to requests that are still running. Try again once they finish."
+		code = "quota_pending"
 	}
 	return &apiError{Status: http.StatusTooManyRequests, Message: msg, Type: "rate_limit_error", Code: code}
 }

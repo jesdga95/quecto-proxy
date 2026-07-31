@@ -146,7 +146,11 @@ A request's token cost is only knowable *after* it finishes, so token limits res
 
 A key can also carry a **total token limit**, a lifetime allowance that never refills. Spending it is terminal: the key answers `401 exhausted_api_key` from then on, alongside expired and revoked, rather than a `429` that would send an SDK into a backoff loop it never leaves. Raising the limit or resetting the key's tally puts it back to work.
 
-**The quota counts settled tokens only, never the reservation.** `max_tokens` is a ceiling a caller picks, routinely an order of magnitude above what a reply costs; holding it against an allowance that never refills would spend the lot the moment a long reply started, and a quota smaller than `max_tokens` could never be used at all. So a call in flight holds none of the quota, and calls admitted together can take it past its limit between them. That is the same overshoot the per-minute bucket already allows, traded for not killing a key that has spent almost nothing.
+**A quota is held on admission and tallied on settle.** A call in flight holds an estimate of what it will cost, `max_tokens` plus the prompt read off the request body, and hands back whatever it did not use. Without that hold, calls admitted together each measure themselves against a tally none of them has moved yet, and a model server running four replies at once takes a quota four replies past its limit.
+
+The hold is clamped to whatever is left, so a `max_tokens` larger than the whole quota does not make a key unusable: the last call through is admitted on the remainder and allowed to overshoot it, which ends the key. That leaves the overshoot at **one reply's worth, once, at the end of a key's life** rather than one per slot the upstream has. Holding tighter than that would mean cutting a reply off mid-sentence, which is worse than being a few hundred tokens generous.
+
+Being refused because the remainder is *held* is not the same as spending it. That answers `429 quota_pending` with a `Retry-After`, since it clears the moment the calls in flight settle, while a genuinely spent quota stays the terminal `401`.
 
 To count tokens on streamed replies, Quecto adds `stream_options` to the upstream request and strips the resulting usage frame back out, so callers see a byte stream identical to talking to the model directly. Servers that reject the field are detected on first refusal and fall back. Responses carry OpenAI's own `X-RateLimit-*` headers, so SDK backoff logic works unchanged.
 

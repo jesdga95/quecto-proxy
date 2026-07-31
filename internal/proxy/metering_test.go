@@ -271,6 +271,127 @@ func TestSpentQuotaKillsTheKeyWithoutARetryHint(t *testing.T) {
 	}
 }
 
+// The upstream runs several replies at once, and a quota checked against settled
+// tokens alone would be measured by all of them against a tally none had moved
+// yet. Each call in flight holds its estimate, so the overshoot is one reply's
+// worth rather than one for every slot the model server has.
+func TestConcurrentCallsCannotOverspendTheQuota(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 400, 400
+	// Slow enough that all four calls are inside the limiter before any settles.
+	opts.TTFT, opts.ChunkDelay = 50*time.Millisecond, 10*time.Millisecond
+	r := newRig(t, opts)
+	r.setQuota(intp64(600))
+
+	// A ceiling above the whole quota, which is the case that used to let every
+	// concurrent call through: the first holds what is left and the rest wait.
+	const body = `{"model":"m","stream":true,"max_tokens":2000}`
+	var wg sync.WaitGroup
+	codes := make([]int, 4)
+	bodies := make([][]byte, 4)
+	for n := range codes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := r.post("/v1/chat/completions", body, r.secret)
+			bodies[n], _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			codes[n] = resp.StatusCode
+		}()
+	}
+	wg.Wait()
+
+	// A call that lost the race is refused either way: held off while the first
+	// reply runs, and terminally once it has settled past the limit.
+	ok, refused := 0, 0
+	for n, code := range codes {
+		switch code {
+		case http.StatusOK:
+			ok++
+		case http.StatusTooManyRequests, http.StatusUnauthorized:
+			refused++
+		default:
+			t.Fatalf("call %d = %d (%s), want 200, 429 or 401", n+1, code, bodies[n])
+		}
+	}
+	if ok != 1 || refused != 3 {
+		t.Fatalf("%d calls served and %d refused, want 1 and 3", ok, refused)
+	}
+	if got := len(r.upstream.Requests()); got != 1 {
+		t.Fatalf("upstream saw %d requests, want only the one the quota could cover", got)
+	}
+
+	// One reply of 800 against a 600 quota, not four of them.
+	key, err := r.st.GetKey(1)
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if got := r.limiter.Peek(key).TotalSpent; got != 800 {
+		t.Fatalf("spent = %d of a 600 quota, want the 800 a single reply costs", got)
+	}
+}
+
+// A quota held by calls in flight is a wait, not the end of the key, so it must
+// not answer with the terminal error the other key states use.
+func TestQuotaHeldByCallsInFlightIsRetryable(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 10, 10
+	// The reply lasts long enough to be refused against, and costs 20 of 600, so
+	// the quota is only ever held rather than spent.
+	opts.TTFT, opts.ChunkDelay = 200*time.Millisecond, 20*time.Millisecond
+	r := newRig(t, opts)
+	r.setQuota(intp64(600))
+
+	const body = `{"model":"m","stream":true,"max_tokens":2000}`
+	first := make(chan struct{})
+	go func() {
+		defer close(first)
+		resp := r.post("/v1/chat/completions", body, r.secret)
+		io.ReadAll(resp.Body)
+		resp.Body.Close()
+	}()
+	r.waitForQuotaHold()
+
+	resp := r.post("/v1/chat/completions", body, r.secret)
+	refused, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("second call = %d, want a retryable 429 rather than the terminal 401: %s",
+			resp.StatusCode, refused)
+	}
+	if !bytes.Contains(refused, []byte("quota_pending")) {
+		t.Fatalf("refusal body = %s", refused)
+	}
+	if got := resp.Header.Get("Retry-After"); got == "" {
+		t.Fatal("a refusal that clears on its own carried no Retry-After")
+	}
+
+	<-first
+	resp = r.post("/v1/chat/completions", body, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("call after the hold was released = %d, want 200", resp.StatusCode)
+	}
+}
+
+// waitForQuotaHold blocks until a call in flight has taken the key's remaining
+// quota, which is the point a second call has something to be refused against.
+func (r *rig) waitForQuotaHold() {
+	r.t.Helper()
+	key, err := r.st.GetKey(1)
+	if err != nil {
+		r.t.Fatalf("get key: %v", err)
+	}
+	for n := 0; n < 2000; n++ {
+		if d := r.limiter.Peek(key); d.TotalRemaining == 0 {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	r.t.Fatal("no call ever took the quota")
+}
+
 func TestQuotaSpentInAnEarlierRunIsRefusedAtTheDoor(t *testing.T) {
 	r := newRig(t, nullupstream.DefaultOptions())
 	// A key row the usage writer already took to its limit, as a restart finds it.
