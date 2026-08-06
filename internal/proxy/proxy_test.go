@@ -98,6 +98,22 @@ func (r *rig) post(path, body string, auth string) *http.Response {
 	return resp
 }
 
+func (r *rig) get(path, auth string) *http.Response {
+	r.t.Helper()
+	req, err := http.NewRequest("GET", r.front.URL+path, nil)
+	if err != nil {
+		r.t.Fatalf("build request: %v", err)
+	}
+	if auth != "" {
+		req.Header.Set("Authorization", "Bearer "+auth)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		r.t.Fatalf("do request: %v", err)
+	}
+	return resp
+}
+
 func TestForwardsAuthenticatedRequest(t *testing.T) {
 	r := newRig(t, nullupstream.DefaultOptions())
 
@@ -304,11 +320,118 @@ func TestJoinUpstreamPath(t *testing.T) {
 		{"/openai/v1", "/v1/models", "/openai/v1/models"},
 		{"/v1", "/v1", "/v1"},
 		{"/v1", "/v1/", "/v1/"},
+
+		// A utility route is served at the upstream's root, so the OpenAI
+		// prefix comes off while any mount point in front of it stays.
+		{"/v1", "/tokenize", "/tokenize"},
+		{"", "/tokenize", "/tokenize"},
+		{"/v1/", "/tokenize", "/tokenize"},
+		{"/openai/v1", "/tokenize", "/openai/tokenize"},
+		{"/llama/v1", "/health", "/llama/health"},
+		{"/openai", "/props", "/openai/props"},
 	}
 	for _, c := range cases {
 		if got := joinUpstreamPath(c.base, c.in); got != c.want {
 			t.Errorf("joinUpstreamPath(%q, %q) = %q, want %q", c.base, c.in, got, c.want)
 		}
+	}
+}
+
+// A utility route is forwarded to the upstream's root and comes back untouched,
+// which is the whole reason it is mounted rather than answered here.
+func TestForwardsUtilityRoutes(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+
+	resp := r.post("/tokenize", `{"content":"hello world"}`, r.secret)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	if !bytes.Contains(body, []byte(`"tokens"`)) {
+		t.Fatalf("body = %s, want the upstream's own reply", body)
+	}
+
+	got, ok := r.upstream.LastRequest()
+	if !ok {
+		t.Fatal("the upstream never saw the request")
+	}
+	if got.Path != "/tokenize" {
+		t.Fatalf("upstream path = %q, want /tokenize", got.Path)
+	}
+	if bytes.Contains(got.Body, []byte("stream_options")) {
+		t.Fatalf("an OpenAI field was added to a native route: %s", got.Body)
+	}
+
+	// The bodyless ones take their own path through the request side.
+	for _, path := range []string{"/health", "/props"} {
+		resp := r.get(path, r.secret)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", path, resp.StatusCode)
+		}
+		if got, _ := r.upstream.LastRequest(); got.Path != path {
+			t.Errorf("upstream saw %q, want %q", got.Path, path)
+		}
+	}
+}
+
+// A utility route still needs a key. Without auth the whitelist would be an
+// unauthenticated way to spend the model server's CPU.
+func TestUtilityRoutesStillNeedAKey(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+
+	resp := r.post("/tokenize", `{"content":"hello"}`, "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+	if _, ok := r.upstream.LastRequest(); ok {
+		t.Fatal("an unauthenticated request reached the upstream")
+	}
+}
+
+// A utility route generates nothing, so it must hold nothing and bill nothing.
+// A key down to its last few tokens still tokenizes a body far longer than the
+// quota, and the call leaves the quota where it found it.
+func TestUtilityRoutesHoldNoQuota(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	rec := r.withRecorder()
+	r.setQuota(intp64(10))
+
+	long := `{"content":"` + strings.Repeat("a", 4096) + `"}`
+	resp := r.post("/tokenize", long, r.secret)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+
+	got, ok := rec.last()
+	if !ok {
+		t.Fatal("the call was not reported")
+	}
+	if got.HasUsage || got.Usage.Total() != 0 {
+		t.Errorf("a utility route billed tokens: %+v", got.Usage)
+	}
+	if got.Estimated {
+		t.Error("a utility route was charged an estimate")
+	}
+}
+
+// The hold is the mechanism behind that: the same body costs a completion its
+// prompt and its reply, and costs a utility route nothing.
+func TestUtilityRequestsEstimateNothing(t *testing.T) {
+	body := []byte(`{"content":"` + strings.Repeat("a", 4096) + `"}`)
+
+	completion := &requestInfo{Body: body, MaxTokens: 2048}
+	if completion.estimate() == 0 {
+		t.Fatal("a completion of this size must be held against the quota")
+	}
+	utility := &requestInfo{Body: body, MaxTokens: 2048, Utility: true}
+	if got := utility.estimate(); got != 0 {
+		t.Errorf("utility estimate = %d, want 0", got)
 	}
 }
 

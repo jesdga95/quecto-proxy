@@ -24,6 +24,11 @@ import (
 
 const idleKeySweep = 30 * time.Minute
 
+// healthPath is Quecto's own liveness route, sharing the /quecto namespace with
+// the admin API. It answers for this process only. Whether the model is loaded
+// is the upstream's own /health, which is forwarded and needs a key.
+const healthPath = "/quecto/health"
+
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(log)
@@ -143,11 +148,17 @@ func run(log *slog.Logger) error {
 // address, in which case the proxy port carries no admin URL at all.
 func routes(cfg *config.Config, adminAPI, dashboard, px http.Handler) (proxyMux, adminMux *http.ServeMux) {
 	proxyMux = http.NewServeMux()
-	proxyMux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	proxyMux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 	proxyMux.Handle("/v1/", px)
+	// The upstream serves these at its root rather than under /v1, so each is
+	// mounted by name and method. Naming them is what keeps everything else the
+	// model server exposes, generating or state changing, off this port.
+	for _, rt := range proxy.UtilityRoutes {
+		proxyMux.Handle(rt.Method+" "+rt.Path, px)
+	}
 	proxyMux.Handle("/", proxy.NotFoundHandler())
 
 	adminMux = proxyMux

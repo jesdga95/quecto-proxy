@@ -30,6 +30,9 @@ type requestInfo struct {
 	Stream    bool
 	MaxTokens int
 
+	// True for one of the upstream's utility routes, which cost no tokens.
+	Utility bool
+
 	// True when the caller already asked for usage, so the reply must keep it.
 	ClientWantsUsage bool
 	// True when the proxy added stream_options and must remove the extra frame.
@@ -44,22 +47,29 @@ type requestInfo struct {
 // reply cannot pass max_tokens, and the prompt is read off the body at a
 // deliberately tight three bytes a token. Charging only max_tokens would leave
 // every prompt out of the hold, which is most of the cost of a short reply.
+//
+// A utility route holds nothing. It generates no tokens, so any hold would be
+// room taken from a quota the call is never going to spend, and a long enough
+// body could refuse the key outright for a request that bills zero.
 func (i *requestInfo) estimate() int64 {
+	if i.Utility {
+		return 0
+	}
 	return int64(len(i.Body)/3 + i.MaxTokens)
 }
 
 // inspectBody reads the request body and reports what the proxy needs from it.
 // A body that is not JSON is passed through untouched.
-func inspectBody(r *http.Request, defaultMaxTokens int) (*requestInfo, error) {
+func inspectBody(r *http.Request, defaultMaxTokens int, utility bool) (*requestInfo, error) {
 	if r.Body == nil {
-		return &requestInfo{MaxTokens: defaultMaxTokens}, nil
+		return &requestInfo{MaxTokens: defaultMaxTokens, Utility: utility}, nil
 	}
 	raw, err := readBody(r)
 	if err != nil {
 		return nil, err
 	}
 
-	info := &requestInfo{Body: raw, MaxTokens: defaultMaxTokens}
+	info := &requestInfo{Body: raw, MaxTokens: defaultMaxTokens, Utility: utility}
 	setBody(r, info)
 
 	p, ok := scanRequest(raw)

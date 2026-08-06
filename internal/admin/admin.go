@@ -99,7 +99,11 @@ func New(cfg *config.Config, st *store.Store, registry *keys.Registry, limiter *
 
 // Prefix is where the admin API is mounted. Every route below carries it, so
 // the handler can be mounted there without the path being rewritten.
-const Prefix = "/admin/api"
+//
+// It sits under /quecto, the one namespace Quecto claims for itself. Everything
+// outside that belongs to the upstream's shape, so a route the model server
+// adds can be forwarded without first checking it against a name of ours.
+const Prefix = "/quecto/api"
 
 // Handler is the whole admin API behind one mount, including how it answers a
 // path it does not serve. Nothing outside has to know the routes or the shape.

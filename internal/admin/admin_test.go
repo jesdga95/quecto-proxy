@@ -85,7 +85,7 @@ func (h *harness) do(method, path string, body any, cookie *http.Cookie) *httpte
 
 func (h *harness) login() *http.Cookie {
 	h.t.Helper()
-	rec := h.do("POST", "/admin/api/session", map[string]string{"password": testPassword}, nil)
+	rec := h.do("POST", "/quecto/api/session", map[string]string{"password": testPassword}, nil)
 	if rec.Code != http.StatusOK {
 		h.t.Fatalf("login = %d, body %s", rec.Code, rec.Body)
 	}
@@ -109,7 +109,7 @@ func decodeBody[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 
 func TestAuthRequired(t *testing.T) {
 	h := newHarness(t)
-	for _, path := range []string{"/admin/api/me", "/admin/api/keys", "/admin/api/settings"} {
+	for _, path := range []string{"/quecto/api/me", "/quecto/api/keys", "/quecto/api/settings"} {
 		if rec := h.do("GET", path, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s without a cookie = %d, want 401", path, rec.Code)
 		}
@@ -118,7 +118,7 @@ func TestAuthRequired(t *testing.T) {
 
 func TestLoginRejectsWrongPassword(t *testing.T) {
 	h := newHarness(t)
-	rec := h.do("POST", "/admin/api/session", map[string]string{"password": "nope"}, nil)
+	rec := h.do("POST", "/quecto/api/session", map[string]string{"password": "nope"}, nil)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("login with wrong password = %d, want 401", rec.Code)
 	}
@@ -142,7 +142,7 @@ func TestCreateKeyReturnsSecretOnceOnly(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	rec := h.do("POST", "/admin/api/keys", map[string]any{
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{
 		"name": "laptop", "rpm_limit": 60, "tpm_limit": 120000,
 	}, c)
 	if rec.Code != http.StatusCreated {
@@ -166,11 +166,11 @@ func TestCreateKeyReturnsSecretOnceOnly(t *testing.T) {
 	}
 
 	// Neither the list nor the detail view may repeat the secret.
-	list := h.do("GET", "/admin/api/keys", nil, c)
+	list := h.do("GET", "/quecto/api/keys", nil, c)
 	if bytes.Contains(list.Body.Bytes(), []byte(created.Secret)) {
 		t.Fatal("the list endpoint leaked the raw key")
 	}
-	detail := h.do("GET", "/admin/api/keys/1", nil, c)
+	detail := h.do("GET", "/quecto/api/keys/1", nil, c)
 	if bytes.Contains(detail.Body.Bytes(), []byte(created.Secret)) {
 		t.Fatal("the detail endpoint leaked the raw key")
 	}
@@ -191,7 +191,7 @@ func TestCreateKeyValidation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if rec := h.do("POST", "/admin/api/keys", tc.body, c); rec.Code != http.StatusBadRequest {
+			if rec := h.do("POST", "/quecto/api/keys", tc.body, c); rec.Code != http.StatusBadRequest {
 				t.Fatalf("create = %d, want 400, body %s", rec.Code, rec.Body)
 			}
 		})
@@ -202,13 +202,13 @@ func TestRevokeAndDelete(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	rec := h.do("POST", "/admin/api/keys", map[string]any{"name": "temp"}, c)
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{"name": "temp"}, c)
 	created := decodeBody[struct {
 		Key    keyDTO `json:"key"`
 		Secret string `json:"secret"`
 	}](t, rec)
 
-	rec = h.do("POST", "/admin/api/keys/1/revoke", nil, c)
+	rec = h.do("POST", "/quecto/api/keys/1/revoke", nil, c)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("revoke = %d, body %s", rec.Code, rec.Body)
 	}
@@ -225,13 +225,13 @@ func TestRevokeAndDelete(t *testing.T) {
 		t.Fatalf("revoked key reports usable=%v reason=%q", usable, reason)
 	}
 
-	if rec := h.do("DELETE", "/admin/api/keys/1", nil, c); rec.Code != http.StatusNoContent {
+	if rec := h.do("DELETE", "/quecto/api/keys/1", nil, c); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d, body %s", rec.Code, rec.Body)
 	}
 	if _, ok := h.reg.Lookup(keys.Hash(created.Secret)); ok {
 		t.Fatal("deleted key is still in the registry")
 	}
-	if rec := h.do("GET", "/admin/api/keys/1", nil, c); rec.Code != http.StatusNotFound {
+	if rec := h.do("GET", "/quecto/api/keys/1", nil, c); rec.Code != http.StatusNotFound {
 		t.Fatalf("get after delete = %d, want 404", rec.Code)
 	}
 }
@@ -241,14 +241,14 @@ func TestExpiredKeyReportsExpired(t *testing.T) {
 	c := h.login()
 
 	future := time.Now().Add(time.Hour).Unix()
-	h.do("POST", "/admin/api/keys", map[string]any{"name": "soon", "expires_at": future}, c)
+	h.do("POST", "/quecto/api/keys", map[string]any{"name": "soon", "expires_at": future}, c)
 
 	past := time.Now().Add(-time.Hour).Unix()
 	if _, err := h.st.UpdateKey(1, store.KeyUpdate{ExpiresAt: ptr(&past)}); err != nil {
 		t.Fatalf("backdate expiry: %v", err)
 	}
 
-	rec := h.do("GET", "/admin/api/keys/1", nil, c)
+	rec := h.do("GET", "/quecto/api/keys/1", nil, c)
 	if got := decodeBody[keyDTO](t, rec); got.Status != "expired" {
 		t.Fatalf("status = %q, want expired", got.Status)
 	}
@@ -258,7 +258,7 @@ func TestSpentQuotaReportsExhaustedAndResetRevivesIt(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	rec := h.do("POST", "/admin/api/keys", map[string]any{
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{
 		"name": "capped", "total_token_limit": 1000,
 	}, c)
 	if got := decodeBody[struct {
@@ -270,12 +270,12 @@ func TestSpentQuotaReportsExhaustedAndResetRevivesIt(t *testing.T) {
 	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
 		t.Fatalf("seed spend: %v", err)
 	}
-	got := decodeBody[keyDTO](t, h.do("GET", "/admin/api/keys/1", nil, c))
+	got := decodeBody[keyDTO](t, h.do("GET", "/quecto/api/keys/1", nil, c))
 	if got.Status != "exhausted" {
 		t.Fatalf("status = %q, want exhausted", got.Status)
 	}
 
-	rec = h.do("PATCH", "/admin/api/keys/1", map[string]any{"reset_tokens_spent": true}, c)
+	rec = h.do("PATCH", "/quecto/api/keys/1", map[string]any{"reset_tokens_spent": true}, c)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset = %d, body %s", rec.Code, rec.Body)
 	}
@@ -294,19 +294,19 @@ func TestDeletedKeyLeavesNoQuotaBehindForItsSuccessor(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	h.do("POST", "/admin/api/keys", map[string]any{"name": "first", "total_token_limit": 1000}, c)
+	h.do("POST", "/quecto/api/keys", map[string]any{"name": "first", "total_token_limit": 1000}, c)
 	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
 		t.Fatalf("seed spend: %v", err)
 	}
-	if got := decodeBody[keyDTO](t, h.do("GET", "/admin/api/keys/1", nil, c)); got.Status != "exhausted" {
+	if got := decodeBody[keyDTO](t, h.do("GET", "/quecto/api/keys/1", nil, c)); got.Status != "exhausted" {
 		t.Fatalf("status = %q, want exhausted before the delete", got.Status)
 	}
 
-	if rec := h.do("DELETE", "/admin/api/keys/1", nil, c); rec.Code != http.StatusNoContent {
+	if rec := h.do("DELETE", "/quecto/api/keys/1", nil, c); rec.Code != http.StatusNoContent {
 		t.Fatalf("delete = %d, body %s", rec.Code, rec.Body)
 	}
 
-	rec := h.do("POST", "/admin/api/keys", map[string]any{"name": "second", "total_token_limit": 1000}, c)
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{"name": "second", "total_token_limit": 1000}, c)
 	got := decodeBody[struct {
 		Key keyDTO `json:"key"`
 	}](t, rec).Key
@@ -325,7 +325,7 @@ func TestQuotaLimitMustBePositive(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	rec := h.do("POST", "/admin/api/keys", map[string]any{"name": "k", "total_token_limit": 0}, c)
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{"name": "k", "total_token_limit": 0}, c)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("create with a zero quota = %d, want 400", rec.Code)
 	}
@@ -336,12 +336,12 @@ func TestUpdateClearsLimitsAndExpiry(t *testing.T) {
 	c := h.login()
 
 	exp := time.Now().Add(24 * time.Hour).Unix()
-	h.do("POST", "/admin/api/keys", map[string]any{
+	h.do("POST", "/quecto/api/keys", map[string]any{
 		"name": "k", "expires_at": exp, "rpm_limit": 10, "tpm_limit": 20,
 		"total_token_limit": 5000,
 	}, c)
 
-	rec := h.do("PATCH", "/admin/api/keys/1", map[string]any{
+	rec := h.do("PATCH", "/quecto/api/keys/1", map[string]any{
 		"clear_expiry": true, "clear_rpm_limit": true, "clear_tpm_limit": true,
 		"clear_total_token_limit": true,
 	}, c)
@@ -358,14 +358,14 @@ func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 	h := newHarness(t)
 	old := h.login()
 
-	rec := h.do("PATCH", "/admin/api/settings", map[string]any{
+	rec := h.do("PATCH", "/quecto/api/settings", map[string]any{
 		"new_password": "another-long-password",
 	}, old)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("change password = %d, body %s", rec.Code, rec.Body)
 	}
 
-	if got := h.do("GET", "/admin/api/me", nil, old); got.Code != http.StatusUnauthorized {
+	if got := h.do("GET", "/quecto/api/me", nil, old); got.Code != http.StatusUnauthorized {
 		t.Fatalf("old cookie still works after a password change: %d", got.Code)
 	}
 
@@ -378,7 +378,7 @@ func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 	if fresh == nil {
 		t.Fatal("no replacement cookie issued to the browser that changed the password")
 	}
-	if got := h.do("GET", "/admin/api/me", nil, fresh); got.Code != http.StatusOK {
+	if got := h.do("GET", "/quecto/api/me", nil, fresh); got.Code != http.StatusOK {
 		t.Fatalf("replacement cookie rejected: %d", got.Code)
 	}
 }
@@ -387,7 +387,7 @@ func TestSettingsHideUpstreamCredential(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 
-	rec := h.do("PATCH", "/admin/api/settings", map[string]any{"upstream_api_key": "sk-secret-value"}, c)
+	rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_api_key": "sk-secret-value"}, c)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch = %d, body %s", rec.Code, rec.Body)
 	}
@@ -396,7 +396,7 @@ func TestSettingsHideUpstreamCredential(t *testing.T) {
 	}
 
 	// Sending the mask back must not overwrite the stored credential.
-	h.do("PATCH", "/admin/api/settings", map[string]any{"upstream_api_key": "********"}, c)
+	h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_api_key": "********"}, c)
 	live, _ := settings.Load(&config.Config{
 		UpstreamURL: mustURL("http://127.0.0.1:9/v1"), DefaultMaxTokens: 1,
 		LogRetentionDays: 1, LogMaxRows: 1000,
@@ -410,7 +410,7 @@ func TestSettingsRejectBadUpstream(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()
 	for _, bad := range []string{"ftp://x/v1", "not a url", "http://"} {
-		rec := h.do("PATCH", "/admin/api/settings", map[string]any{"upstream_url": bad}, c)
+		rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_url": bad}, c)
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("upstream_url=%q = %d, want 400", bad, rec.Code)
 		}
@@ -441,7 +441,7 @@ func TestLoginVerificationIsBounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			codes <- h.do("POST", "/admin/api/session", map[string]string{"password": "wrong"}, nil).Code
+			codes <- h.do("POST", "/quecto/api/session", map[string]string{"password": "wrong"}, nil).Code
 		}()
 	}
 	wg.Wait()
@@ -473,12 +473,12 @@ func TestSheddingDoesNotWeakenAuth(t *testing.T) {
 	h.srv.verifyWait = time.Millisecond
 
 	for i := 0; i < 20; i++ {
-		if code := h.do("POST", "/admin/api/session", map[string]string{"password": "wrong"}, nil).Code; code == http.StatusOK {
+		if code := h.do("POST", "/quecto/api/session", map[string]string{"password": "wrong"}, nil).Code; code == http.StatusOK {
 			t.Fatal("a wrong password was accepted while shedding load")
 		}
 	}
 	// The correct password still works once there is no contention.
-	if code := h.do("POST", "/admin/api/session", map[string]string{"password": testPassword}, nil).Code; code != http.StatusOK {
+	if code := h.do("POST", "/quecto/api/session", map[string]string{"password": testPassword}, nil).Code; code != http.StatusOK {
 		t.Fatalf("correct password = %d, want 200", code)
 	}
 }
@@ -490,10 +490,10 @@ func TestAMissIsAnsweredInJson(t *testing.T) {
 	h := newHarness(t)
 
 	for _, c := range []struct{ method, path string }{
-		{"GET", "/admin/api/nope"},
-		{"GET", "/admin/api/"},
-		{"PUT", "/admin/api/keys"},   // a real path by a method it does not serve
-		{"GET", "/admin/api/keys/1"}, // signed out, so this one is a 401
+		{"GET", "/quecto/api/nope"},
+		{"GET", "/quecto/api/"},
+		{"PUT", "/quecto/api/keys"},   // a real path by a method it does not serve
+		{"GET", "/quecto/api/keys/1"}, // signed out, so this one is a 401
 	} {
 		rec := h.do(c.method, c.path, nil, nil)
 		if rec.Code == http.StatusOK {

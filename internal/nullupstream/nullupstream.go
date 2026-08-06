@@ -131,6 +131,10 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if reply, ok := utilityReply(r.URL.Path); ok {
+		writeJSON(w, http.StatusOK, reply)
+		return
+	}
 
 	var req chatRequest
 	if err := json.Unmarshal(body, &req); err != nil {
@@ -147,6 +151,25 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.serveStream(w, req, opts)
+}
+
+// utilityReply answers the routes a model server keeps outside the OpenAI
+// surface, in their own shapes. None of them carry a usage block, which is the
+// part the proxy has to account for without.
+func utilityReply(path string) (any, bool) {
+	switch path {
+	case "/health":
+		return map[string]any{"status": "ok"}, true
+	case "/props":
+		return map[string]any{"default_generation_settings": map[string]any{"n_ctx": 4096}}, true
+	case "/tokenize":
+		return map[string]any{"tokens": []int{15339, 1917}}, true
+	case "/detokenize":
+		return map[string]any{"content": "hello world"}, true
+	case "/apply-template":
+		return map[string]any{"prompt": "<|user|>hello<|assistant|>"}, true
+	}
+	return nil, false
 }
 
 func (u *Upstream) serveWhole(w http.ResponseWriter, req chatRequest, opts Options) {

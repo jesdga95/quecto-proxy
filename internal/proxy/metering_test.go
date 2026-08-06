@@ -636,7 +636,7 @@ func TestInspectBodyReadsLimitsAndModel(t *testing.T) {
 	}
 	for _, c := range cases {
 		req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(c.body))
-		info, err := inspectBody(req, 2048)
+		info, err := inspectBody(req, 2048, false)
 		if err != nil {
 			t.Fatalf("inspectBody(%q): %v", c.body, err)
 		}
@@ -662,7 +662,7 @@ func BenchmarkInspectAndInject(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-		info, err := inspectBody(req, 2048)
+		info, err := inspectBody(req, 2048, false)
 		if err != nil {
 			b.Fatal(err)
 		}

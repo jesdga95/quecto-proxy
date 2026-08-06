@@ -97,7 +97,7 @@ export interface Settings {
   trust_proxy_headers: boolean;
 }
 
-const BASE = "/admin/api";
+const BASE = "/quecto/api";
 
 /** Thrown for any non-2xx reply, carrying the message the server wrote. */
 export class ApiError extends Error {

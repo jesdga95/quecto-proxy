@@ -48,8 +48,22 @@ Without compose, `docker build -t quecto .` and pass the same variables with `-e
 
 ## Two ports, and what to expose
 
-- **`:11312`, the API.** The only port that needs to be reachable. It answers 404 for every `/admin` URL, so whatever you point at it carries the API and nothing else.
+- **`:11312`, the API.** The only port that needs to be reachable. It answers 404 for every `/quecto/api` and `/admin` URL, so whatever you point at it carries the API and nothing else. `GET /quecto/health` is its one unauthenticated route.
 - **`:11313`, the dashboard.** Nothing rate limits password guesses at the login, so keep it on your own network or put an identity layer in front of it.
+
+## What the API port serves
+
+Everything outside `/quecto` belongs to the model server's own shape, so `/v1` is forwarded whole and the upstream's root routes are forwarded by name.
+
+| | |
+|---|---|
+| `/v1/...` | Forwarded whole. Whatever your model server serves under `/v1` is what exists |
+| `GET /health`, `GET /props` | The upstream's own. What is loaded, and whether it is ready |
+| `POST /tokenize`, `/detokenize`, `/apply-template` | The upstream's own. Needs a key, counts against the per-minute request limit, bills no tokens |
+| `GET /quecto/health` | Quecto's own liveness, no key. Says nothing about the model |
+| `/quecto/api/...` | The dashboard's API, session authenticated |
+
+The upstream's generating routes (`/completion`, `/infill`, `/embedding`, `/reranking`) are **not** forwarded: they report token counts in the model server's own shape rather than an OpenAI `usage` block, so Quecto cannot meter them. Neither are the routes that reach across callers, and those stay off for good: `GET /slots` returns the prompt sitting in each slot, and `POST` to `/props` or `/lora-adapters` changes the server underneath everyone else.
 
 ## Where Quecto fits
 
@@ -87,6 +101,7 @@ The container prints its reason and exits, so a start that vanishes from `docker
 | 401 on a request | Key is wrong, expired, or revoked. The body says which |
 | Connection error on a request | Quecto cannot reach the upstream. Check `QUECTO_UPSTREAM_URL` |
 | 404 on `:11312/admin` | The dashboard is on its own port. Publish it with `-p 11313:11313` |
+| 404 on a native route | Only the utility routes are forwarded, see the table above |
 
 The password is only consumed when no admin account exists yet, so changing the variable later does nothing. Reset it from the dashboard instead.
 

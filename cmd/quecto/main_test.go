@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"quecto/internal/config"
+	"quecto/internal/proxy"
 	"quecto/internal/web"
 )
 
@@ -45,7 +46,7 @@ func TestAMissOnTheProxyPortIsStillTheApiShape(t *testing.T) {
 		{"GET", "/"},
 		{"POST", "/chat/completions"}, // the /v1 prefix left off
 		{"GET", "/admin/"},            // moved to its own port
-		{"POST", "/admin/api/session"},
+		{"POST", "/quecto/api/session"},
 	} {
 		rec := probe(proxyMux, c.method, c.path)
 		if rec.Code != http.StatusNotFound {
@@ -95,15 +96,16 @@ func TestEachPortMissesInItsOwnShape(t *testing.T) {
 	}
 }
 
-// The API sits under the dashboard's own prefix, so the more specific mount
-// has to win or every API call would be answered with markup.
-func TestTheApiAndTheDashboardDoNotOverlap(t *testing.T) {
+// The API and the dashboard are separate prefixes sharing one port, so each
+// has to reach its own handler. An API call answered with markup is the failure
+// this guards, since the dashboard reads a message out of every reply.
+func TestTheApiAndTheDashboardReachTheirOwnHandler(t *testing.T) {
 	_, adminMux := build(t, "127.0.0.1:11313")
 
 	for _, c := range []struct{ path, want string }{
-		{"/admin/api/keys", "admin-api"},
-		{"/admin/api/nope", "admin-api"},
-		{"/admin/api/", "admin-api"},
+		{"/quecto/api/keys", "admin-api"},
+		{"/quecto/api/nope", "admin-api"},
+		{"/quecto/api/", "admin-api"},
 		{"/admin/", "dashboard"},
 		{"/admin/keys", "dashboard"},
 		{"/admin/assets/app.js", "dashboard"},
@@ -111,6 +113,60 @@ func TestTheApiAndTheDashboardDoNotOverlap(t *testing.T) {
 		if got := probe(adminMux, "GET", c.path).Body.String(); got != c.want {
 			t.Errorf("GET %s reached %q, want %q", c.path, got, c.want)
 		}
+	}
+}
+
+// The upstream's utility routes sit at the root, where they have to reach the
+// proxy rather than the 404 that owns everything unmounted.
+func TestUtilityRoutesReachTheProxy(t *testing.T) {
+	proxyMux, _ := build(t, "127.0.0.1:11313")
+
+	for _, rt := range proxy.UtilityRoutes {
+		if got := probe(proxyMux, rt.Method, rt.Path).Body.String(); got != "proxy" {
+			t.Errorf("%s %s reached %q, want the proxy", rt.Method, rt.Path, got)
+		}
+	}
+}
+
+// Mounting the utility routes by name is what keeps the rest of the model
+// server off this port. Generating routes are absent because nothing here can
+// meter them, and the state changing ones because they reach across callers.
+func TestTheRestOfTheUpstreamIsNotForwarded(t *testing.T) {
+	proxyMux, _ := build(t, "127.0.0.1:11313")
+
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/completion"},
+		{"POST", "/infill"},
+		{"POST", "/embedding"},
+		{"POST", "/reranking"},
+		{"GET", "/slots"},
+		{"POST", "/slots/0"},
+		{"GET", "/metrics"},
+		{"GET", "/lora-adapters"},
+		{"POST", "/lora-adapters"},
+		{"POST", "/props"},   // a forwarded path by a method that changes state
+		{"POST", "/health"},  // a forwarded path by a method it does not serve
+		{"GET", "/tokenize"}, // same, the other way around
+	} {
+		if got := status(proxyMux, c.method, c.path); got != http.StatusNotFound {
+			t.Errorf("%s %s = %d, want 404", c.method, c.path, got)
+		}
+	}
+}
+
+// Quecto's own health is namespaced, so it cannot be mistaken for the
+// upstream's. They answer different questions and one of them needs a key.
+func TestTheTwoHealthRoutesAreDistinct(t *testing.T) {
+	proxyMux, _ := build(t, "127.0.0.1:11313")
+
+	if got := probe(proxyMux, "GET", healthPath).Body.String(); !strings.Contains(got, `"status":"ok"`) {
+		t.Errorf("GET %s = %q, want Quecto's own answer", healthPath, got)
+	}
+	if got := probe(proxyMux, "GET", "/health").Body.String(); got != "proxy" {
+		t.Errorf("GET /health = %q, want the upstream's, forwarded", got)
+	}
+	if got := status(proxyMux, "GET", "/healthz"); got != http.StatusNotFound {
+		t.Errorf("GET /healthz = %d, want 404, the name is retired", got)
 	}
 }
 
@@ -123,12 +179,12 @@ func TestSplitKeepsAdminOffTheProxyPort(t *testing.T) {
 		t.Fatal("a separate address must mean a separate mux")
 	}
 
-	for _, path := range []string{"/admin/", "/admin/keys", "/admin/api/keys", "/"} {
+	for _, path := range []string{"/admin/", "/admin/keys", "/quecto/api/keys", "/"} {
 		if got := status(public, "GET", path); got != http.StatusNotFound {
 			t.Errorf("proxy port GET %s = %d, want 404", path, got)
 		}
 	}
-	if got := status(public, "POST", "/admin/api/session"); got != http.StatusNotFound {
+	if got := status(public, "POST", "/quecto/api/session"); got != http.StatusNotFound {
 		t.Errorf("proxy port serves the login endpoint: %d, want 404", got)
 	}
 
@@ -136,11 +192,11 @@ func TestSplitKeepsAdminOffTheProxyPort(t *testing.T) {
 	if got := status(public, "POST", "/v1/chat/completions"); got != http.StatusOK {
 		t.Errorf("proxy port GET /v1/... = %d, want 200", got)
 	}
-	if got := status(public, "GET", "/healthz"); got != http.StatusOK {
-		t.Errorf("proxy port GET /healthz = %d, want 200", got)
+	if got := status(public, "GET", "/quecto/health"); got != http.StatusOK {
+		t.Errorf("proxy port GET /quecto/health = %d, want 200", got)
 	}
 
-	for _, path := range []string{"/admin/", "/admin/api/keys"} {
+	for _, path := range []string{"/admin/", "/quecto/api/keys"} {
 		if got := status(admin, "GET", path); got != http.StatusOK {
 			t.Errorf("dashboard port GET %s = %d, want 200", path, got)
 		}
@@ -158,7 +214,7 @@ func TestSharingIsOptedIntoByName(t *testing.T) {
 	if public != admin {
 		t.Fatal("one address must mean one mux")
 	}
-	for _, path := range []string{"/admin/", "/admin/api/keys", "/healthz"} {
+	for _, path := range []string{"/admin/", "/quecto/api/keys", "/quecto/health"} {
 		if got := status(public, "GET", path); got != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", path, got)
 		}

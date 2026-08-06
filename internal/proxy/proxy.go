@@ -134,7 +134,7 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := inspectBody(r, p.live.DefaultMaxTokens())
+	info, err := inspectBody(r, p.live.DefaultMaxTokens(), isUtilityPath(r.URL.Path))
 	if err != nil {
 		errBadRequestBody(err).write(w)
 		return
@@ -162,7 +162,8 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ask for token counts when the caller did not, then remove the extra frame.
-	if info.Stream && !info.ClientWantsUsage && p.cap.mayInject() {
+	// stream_options is an OpenAI field, so a utility route never gets it.
+	if info.Stream && !info.Utility && !info.ClientWantsUsage && p.cap.mayInject() {
 		if at, needComma, ok := planInjection(info.Body); ok {
 			info.Injected, info.injectAt, info.injectComma = true, at, needComma
 			setBody(r, info)
@@ -318,11 +319,18 @@ func isEventStream(resp *http.Response) bool {
 	return strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream")
 }
 
-// joinUpstreamPath maps an incoming /v1/... path onto the configured base path.
-// A base without a path is treated as /v1 so both common upstream forms work.
+// joinUpstreamPath maps an incoming path onto the configured base path. A base
+// without a path is treated as /v1 so both common upstream forms work.
+//
+// The upstream's utility routes are served at its root, not under its OpenAI
+// prefix, so they are joined to the base's parent instead. Without that a base
+// of /v1 would turn /tokenize into /v1/tokenize, which is nowhere.
 func joinUpstreamPath(base, incoming string) string {
 	if base == "" {
 		base = "/v1"
+	}
+	if !strings.HasPrefix(incoming, "/v1") {
+		return upstreamRoot(base) + incoming
 	}
 	suffix := strings.TrimPrefix(incoming, "/v1")
 	if suffix == "" {
@@ -332,4 +340,11 @@ func joinUpstreamPath(base, incoming string) string {
 		suffix = "/" + suffix
 	}
 	return base + suffix
+}
+
+// upstreamRoot is the base with its OpenAI prefix removed, which is where the
+// upstream serves its own routes. A base carrying a mount point keeps it, so a
+// swapper behind /llama/v1 is still reached at /llama/tokenize.
+func upstreamRoot(base string) string {
+	return strings.TrimSuffix(strings.TrimSuffix(base, "/"), "/v1")
 }
