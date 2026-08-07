@@ -147,6 +147,7 @@ func TestTheRestOfTheUpstreamIsNotForwarded(t *testing.T) {
 		{"POST", "/props"},   // a forwarded path by a method that changes state
 		{"POST", "/health"},  // a forwarded path by a method it does not serve
 		{"GET", "/tokenize"}, // same, the other way around
+		{"POST", "/models"},
 	} {
 		if got := status(proxyMux, c.method, c.path); got != http.StatusNotFound {
 			t.Errorf("%s %s = %d, want 404", c.method, c.path, got)

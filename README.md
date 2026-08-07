@@ -58,7 +58,7 @@ Everything outside `/quecto` belongs to the model server's own shape, so `/v1` i
 | | |
 |---|---|
 | `/v1/...` | Forwarded whole. Whatever your model server serves under `/v1` is what exists |
-| `GET /health`, `GET /props` | The upstream's own. What is loaded, and whether it is ready |
+| `GET /health`, `GET /props`, `GET /models` | The upstream's own. What is loaded, and whether it is ready. `/models` is the server's own listing and answers differently from `/v1/models` |
 | `POST /tokenize`, `/detokenize`, `/apply-template` | The upstream's own. Needs a key, counts against the per-minute request limit, bills no tokens |
 | `GET /quecto/health` | Quecto's own liveness, no key. Says nothing about the model |
 | `/quecto/api/...` | The dashboard's API, session authenticated |

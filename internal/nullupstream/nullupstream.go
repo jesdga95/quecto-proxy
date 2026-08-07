@@ -124,10 +124,24 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, opts.ForceStatus, "forced by the test fixture")
 		return
 	}
-	if strings.HasSuffix(r.URL.Path, "/models") {
+	// A model server lists twice, and the two do not agree. Under the OpenAI
+	// prefix the listing is the OpenAI shape; at the root it is the server's
+	// own, carrying metadata that shape has no room for. Forwarding one to the
+	// other returns a reply the caller cannot use, so they answer differently
+	// here to make that visible.
+	if strings.HasSuffix(r.URL.Path, "/v1/models") {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"object": "list",
 			"data":   []any{map[string]any{"id": opts.Model, "object": "model"}},
+		})
+		return
+	}
+	if strings.HasSuffix(r.URL.Path, "/models") {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"models": []any{map[string]any{
+				"name": opts.Model,
+				"meta": map[string]any{"n_ctx": 4096, "n_params": 7000000000},
+			}},
 		})
 		return
 	}

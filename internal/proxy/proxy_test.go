@@ -377,6 +377,36 @@ func TestForwardsUtilityRoutes(t *testing.T) {
 	}
 }
 
+// The upstream lists twice and the two disagree, so /models has to reach the
+// root and /v1/models the OpenAI prefix. Sending either to the other is the
+// failure that returns a reply the caller cannot use.
+func TestTheTwoModelListingsStayApart(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+
+	native := r.get("/models", r.secret)
+	defer native.Body.Close()
+	body, _ := io.ReadAll(native.Body)
+	if native.StatusCode != http.StatusOK {
+		t.Fatalf("GET /models = %d, want 200: %s", native.StatusCode, body)
+	}
+	if got, _ := r.upstream.LastRequest(); got.Path != "/models" {
+		t.Errorf("upstream saw %q, want /models", got.Path)
+	}
+	if !bytes.Contains(body, []byte(`"meta"`)) {
+		t.Errorf("GET /models returned the OpenAI listing: %s", body)
+	}
+
+	openai := r.get("/v1/models", r.secret)
+	defer openai.Body.Close()
+	body, _ = io.ReadAll(openai.Body)
+	if got, _ := r.upstream.LastRequest(); got.Path != "/v1/models" {
+		t.Errorf("upstream saw %q, want /v1/models", got.Path)
+	}
+	if !bytes.Contains(body, []byte(`"object":"list"`)) {
+		t.Errorf("GET /v1/models returned the upstream's own listing: %s", body)
+	}
+}
+
 // A utility route still needs a key. Without auth the whitelist would be an
 // unauthenticated way to spend the model server's CPU.
 func TestUtilityRoutesStillNeedAKey(t *testing.T) {
