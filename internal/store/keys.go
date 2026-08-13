@@ -210,15 +210,43 @@ func (s *Store) RevokeKey(id int64, at int64) error {
 	return nil
 }
 
+// DeletedKeyID holds the rollup of keys that no longer exist, so their traffic
+// stays in the dashboard totals. SQLite never hands out id 0, so no live key
+// can collide with it.
+const DeletedKeyID = 0
+
 func (s *Store) DeleteKey(id int64) error {
-	res, err := s.DB.Exec("DELETE FROM api_keys WHERE id = ?", id)
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return fmt.Errorf("delete key %d: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	// The rollup carries no foreign key, and SQLite hands the freed id to the
+	// next key, so park the rows on the sentinel or the successor inherits them.
+	if _, err := tx.Exec(`INSERT INTO usage_hourly
+		(bucket, key_id, model, requests, errors, prompt_tokens, completion_tokens)
+		SELECT bucket, ?, model, requests, errors, prompt_tokens, completion_tokens
+		FROM usage_hourly WHERE key_id = ?
+		ON CONFLICT(bucket, key_id, model) DO UPDATE SET
+			requests = requests + excluded.requests,
+			errors = errors + excluded.errors,
+			prompt_tokens = prompt_tokens + excluded.prompt_tokens,
+			completion_tokens = completion_tokens + excluded.completion_tokens`,
+		DeletedKeyID, id); err != nil {
+		return fmt.Errorf("delete key %d: %w", id, err)
+	}
+	if _, err := tx.Exec("DELETE FROM usage_hourly WHERE key_id = ?", id); err != nil {
+		return fmt.Errorf("delete key %d: %w", id, err)
+	}
+	res, err := tx.Exec("DELETE FROM api_keys WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete key %d: %w", id, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrKeyNotFound
 	}
-	return nil
+	return tx.Commit()
 }
 
 type UsageDelta struct {

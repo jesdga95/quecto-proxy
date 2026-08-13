@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -318,6 +319,74 @@ func TestDeletedKeyLeavesNoQuotaBehindForItsSuccessor(t *testing.T) {
 	}
 	if got.Live.TotalSpent != 0 || got.Live.TotalRemaining != 1000 {
 		t.Fatalf("fresh key inherited spend=%d remaining=%d", got.Live.TotalSpent, got.Live.TotalRemaining)
+	}
+}
+
+func TestDeletedKeyUsageStaysInTheTotalsButNotOnTheNextKey(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+	ts := time.Now().Unix()
+
+	create := func(name string) int64 {
+		t.Helper()
+		rec := h.do("POST", "/quecto/api/keys", map[string]any{"name": name}, c)
+		return decodeBody[struct {
+			Key keyDTO `json:"key"`
+		}](t, rec).Key.ID
+	}
+	spend := func(keyID, prompt, completion int64) {
+		t.Helper()
+		if err := h.st.WriteBatch([]store.LogRow{{
+			KeyID: keyID, TS: ts, Model: "m", Status: 200,
+			PromptTokens: &prompt, CompletionTokens: &completion, DurationMS: 5,
+		}}); err != nil {
+			t.Fatalf("seed usage: %v", err)
+		}
+	}
+	stats := func() statsResponse {
+		t.Helper()
+		return decodeBody[statsResponse](t, h.do("GET", "/quecto/api/stats?range=24h", nil, c))
+	}
+	topKey := func(s statsResponse, id int64) *store.KeyTotal {
+		t.Helper()
+		for i := range s.TopKeys {
+			if s.TopKeys[i].KeyID == id {
+				return &s.TopKeys[i]
+			}
+		}
+		return nil
+	}
+
+	first := create("shared-name")
+	spend(first, 700, 300)
+	if rec := h.do("DELETE", "/quecto/api/keys/"+strconv.FormatInt(first, 10), nil, c); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d, body %s", rec.Code, rec.Body)
+	}
+
+	second := create("shared-name")
+	spend(second, 40, 60)
+
+	got := stats()
+	if want := (store.Totals{Requests: 2, PromptTokens: 740, CompletionTokens: 360}); got.Totals != want {
+		t.Fatalf("totals = %+v, want %+v with the deleted key still counted", got.Totals, want)
+	}
+	if dead := topKey(got, store.DeletedKeyID); dead == nil || dead.Requests != 1 || dead.Tokens != 1000 {
+		t.Fatalf("deleted key row = %+v, want its 1 request and 1000 tokens kept", dead)
+	}
+	if live := topKey(got, second); live == nil || live.Requests != 1 || live.Tokens != 100 {
+		t.Fatalf("successor row = %+v, want only its own 1 request and 100 tokens", live)
+	}
+
+	// A second delete folds into the same sentinel rows rather than colliding.
+	if rec := h.do("DELETE", "/quecto/api/keys/"+strconv.FormatInt(second, 10), nil, c); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d, body %s", rec.Code, rec.Body)
+	}
+	got = stats()
+	if len(got.TopKeys) != 1 {
+		t.Fatalf("top keys = %+v, want the two dead keys merged into one row", got.TopKeys)
+	}
+	if dead := topKey(got, store.DeletedKeyID); dead == nil || dead.Requests != 2 || dead.Tokens != 1100 {
+		t.Fatalf("merged row = %+v, want 2 requests and 1100 tokens", dead)
 	}
 }
 

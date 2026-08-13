@@ -319,7 +319,7 @@ import FormField from "../components/molecules/FormField.astro";
       load();
     }
     if (remove) {
-      if (!confirm("Delete this key permanently? Its usage history goes with it.")) return;
+      if (!confirm("Delete this key permanently? Its past usage stays in the totals as a deleted key.")) return;
       await api.deleteKey(Number(remove));
       load();
     }

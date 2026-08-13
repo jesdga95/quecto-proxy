@@ -215,7 +215,7 @@ import StatTile from "../components/molecules/StatTile.astro";
     body.innerHTML = top
       .map(
         (k) => `<tr>
-          <td class="font-medium">${esc(k.key_name || "Deleted key")}</td>
+          <td class="font-medium">${esc(k.key_name || "Deleted keys")}</td>
           <td class="right num">${count(k.requests)}</td>
           <td class="right num">${tokensFlat(k.tokens)}</td>
         </tr>`,
