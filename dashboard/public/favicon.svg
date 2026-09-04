@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" role="img" aria-label="Quecto">
   <rect width="104" height="104" rx="24" fill="#0D9488"/>
-  <circle cx="42" cy="44" r="15" fill="none" stroke="#FFFFFF" stroke-width="7"/>
-  <path d="M57 44V76" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
-  <path d="M68 58l9 9-9 9" fill="none" stroke="#FCD34D" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="none" stroke="#FCD34D" stroke-width="8.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M28 40 L36 52 L28 64"/>
+    <path d="M44 32 L56 52 L44 72"/>
+    <path d="M60 25 L76 52 L60 79"/>
+  </g>
 </svg>

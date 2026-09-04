@@ -8,7 +8,8 @@ interface Props {
 }
 const { size = 30, wordmark = true, class: cls = "" } = Astro.props;
 
-// Flat, square, never recoloured, so the fills are literals rather than tokens.
+// Three chevrons in amber on the teal plate. Flat, square, never recoloured,
+// so the colours are literals rather than tokens.
 const type = Math.round(size * 0.47 * 10) / 10;
 const gap = Math.round(size * 0.27);
 ---
@@ -24,16 +25,17 @@ const gap = Math.round(size * 0.27);
     aria-hidden={wordmark ? "true" : undefined}
   >
     <rect width="104" height="104" rx="24" fill="#0D9488"></rect>
-    <circle cx="42" cy="44" r="15" fill="none" stroke="#FFFFFF" stroke-width="7"></circle>
-    <path d="M57 44V76" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"
-    ></path>
-    <path
-      d="M68 58l9 9-9 9"
+    <g
       fill="none"
       stroke="#FCD34D"
-      stroke-width="7"
+      stroke-width="8.6"
       stroke-linecap="round"
-      stroke-linejoin="round"></path>
+      stroke-linejoin="round"
+    >
+      <path d="M28 40 L36 52 L28 64"></path>
+      <path d="M44 32 L56 52 L44 72"></path>
+      <path d="M60 25 L76 52 L60 79"></path>
+    </g>
   </svg>
   {wordmark && <span class="wordmark text-ink" style={`font-size:${type}px`}>Quecto</span>}
 </span>
