@@ -437,8 +437,9 @@ func TestUtilityRoutesHoldNoQuota(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
 	}
+	io.ReadAll(resp.Body)
 
-	got, ok := rec.last()
+	got, ok := rec.waitForRecord()
 	if !ok {
 		t.Fatal("the call was not reported")
 	}

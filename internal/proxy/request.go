@@ -12,9 +12,40 @@ const maxRequestBody = 32 << 20
 
 // Usage is the token accounting an OpenAI-compatible server reports.
 type Usage struct {
-	PromptTokens     int64 `json:"prompt_tokens"`
-	CompletionTokens int64 `json:"completion_tokens"`
-	TotalTokens      int64 `json:"total_tokens"`
+	PromptTokens        int64                `json:"prompt_tokens"`
+	CompletionTokens    int64                `json:"completion_tokens"`
+	TotalTokens         int64                `json:"total_tokens"`
+	PromptTokensDetails *promptTokensDetails `json:"prompt_tokens_details"`
+}
+
+type promptTokensDetails struct {
+	CachedTokens *int64 `json:"cached_tokens"`
+}
+
+// timings is the llama.cpp block that rides beside usage and says how much of
+// the prompt the server's cache already held. No other server sends it.
+type timings struct {
+	CacheN *int64 `json:"cache_n"`
+}
+
+// cachedTokens returns how much of the prompt the upstream served from its
+// cache, if it said. The OpenAI field wins over the llama.cpp one, and a value
+// above the whole prompt is clamped to it rather than trusted.
+func cachedTokens(u Usage, t *timings) (int64, bool) {
+	var v *int64
+	switch {
+	case u.PromptTokensDetails != nil && u.PromptTokensDetails.CachedTokens != nil:
+		v = u.PromptTokensDetails.CachedTokens
+	case t != nil && t.CacheN != nil:
+		v = t.CacheN
+	}
+	if v == nil || *v < 0 {
+		return 0, false
+	}
+	if *v > u.PromptTokens {
+		return u.PromptTokens, true
+	}
+	return *v, true
 }
 
 func (u Usage) Total() int64 {

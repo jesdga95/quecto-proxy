@@ -36,6 +36,19 @@ func (r *recorder) last() (Record, bool) {
 	return r.recs[len(r.recs)-1], true
 }
 
+// waitForRecord blocks until a record has been reported. The proxy settles
+// after the reply is fully written, so a check straight after the client saw
+// the last byte can lose the race.
+func (r *recorder) waitForRecord() (Record, bool) {
+	for n := 0; n < 2000; n++ {
+		if rec, ok := r.last(); ok {
+			return rec, true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return r.last()
+}
+
 func (r *rig) withRecorder() *recorder {
 	rec := &recorder{}
 	r.proxy.SetReporter(rec)
@@ -194,6 +207,213 @@ func TestNonStreamingUsageIsCaptured(t *testing.T) {
 	}
 	if got.Stream {
 		t.Fatal("a non-streamed reply was recorded as streamed")
+	}
+}
+
+// A prompt cache hit is a subset of the prompt count, so the record must carry
+// it without moving prompt_tokens or the charge.
+func TestStreamedCachedTokensAreRecordedWithoutTouchingTheStream(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 53, 5
+	opts.CachedTokens = intp(48)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","stream":true}`, r.secret)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	// The caller never asked for usage, so the stream they see is exactly what
+	// it is today: the extra frame stripped, nothing else.
+	if bytes.Contains(body, []byte(`"usage"`)) {
+		t.Fatalf("the usage frame was passed through to a caller that did not ask for it:\n%s", body)
+	}
+	if !bytes.Contains(body, []byte("[DONE]")) {
+		t.Fatalf("stream is missing its terminator:\n%s", body)
+	}
+	if n := bytes.Count(body, []byte("data: ")); n != 10 {
+		t.Fatalf("client saw %d frames, want 8 content frames plus stop plus DONE", n)
+	}
+
+	got, ok := rec.last()
+	if !ok {
+		t.Fatal("no record was reported")
+	}
+	if !got.HasUsage || got.Usage.PromptTokens != 53 {
+		t.Fatalf("usage = %+v, want the full 53 prompt tokens", got.Usage)
+	}
+	if got.CachedTokens == nil || *got.CachedTokens != 48 {
+		t.Fatalf("cached = %v, want 48", got.CachedTokens)
+	}
+}
+
+func TestNonStreamedCachedTokensAreRecorded(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 53, 5
+	opts.CachedTokens = intp(48)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","messages":[]}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.last()
+	if !got.HasUsage || got.Usage.PromptTokens != 53 {
+		t.Fatalf("usage = %+v", got.Usage)
+	}
+	if got.CachedTokens == nil || *got.CachedTokens != 48 {
+		t.Fatalf("cached = %v, want 48", got.CachedTokens)
+	}
+}
+
+// cacheN is a sibling of usage, so the value has to be read off the body, not
+// out of the usage block.
+func TestTimingsCacheNFallsBackWhenTheStandardFieldIsMissing(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 53, 5
+	opts.TimingsCacheN = intp(48)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","stream":true}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.last()
+	if got.CachedTokens == nil || *got.CachedTokens != 48 {
+		t.Fatalf("cached = %v, want the 48 from timings", got.CachedTokens)
+	}
+}
+
+func TestCachedTokensPreferTheStandardFieldOverTimings(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 53, 5
+	opts.CachedTokens = intp(48)
+	opts.TimingsCacheN = intp(11)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","messages":[]}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.last()
+	if got.CachedTokens == nil || *got.CachedTokens != 48 {
+		t.Fatalf("cached = %v, want 48, the standard field wins", got.CachedTokens)
+	}
+}
+
+// Most servers report neither field, and that must come through as unknown
+// rather than as a cache hit of zero.
+func TestUpstreamThatReportsNoCacheSaysNothing(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","stream":true}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.last()
+	if got.CachedTokens != nil {
+		t.Fatalf("cached = %v, want nil for an upstream that reports neither field", got.CachedTokens)
+	}
+}
+
+// A value above the whole prompt cannot be right, so it is clamped to it.
+func TestCachedTokensAboveThePromptAreClamped(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 53, 5
+	opts.CachedTokens = intp(90)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","messages":[]}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.last()
+	if got.CachedTokens == nil || *got.CachedTokens != 53 {
+		t.Fatalf("cached = %v, want the 53 prompt tokens it cannot exceed", got.CachedTokens)
+	}
+}
+
+// Some servers send usage on more than one frame. The last one wins whole, so a
+// cached value from an earlier frame must not outlive it.
+func TestLaterUsageFrameWithoutCacheClearsTheEarlierValue(t *testing.T) {
+	stream := "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":53,\"prompt_tokens_details\":{\"cached_tokens\":48}}}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":60}}\n\n"
+	scanner := newSSEScanner(io.NopCloser(strings.NewReader(stream)), false, time.Now)
+	if _, err := io.Copy(io.Discard, scanner); err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	if u, _ := scanner.Usage(); u.PromptTokens != 60 {
+		t.Fatalf("prompt = %d, want the last frame's 60", u.PromptTokens)
+	}
+	if c, ok := scanner.CachedTokens(); ok {
+		t.Fatalf("cached = %d, want none since the last usage frame reported none", c)
+	}
+}
+
+// A stream that ends without its usage frame is settled as an estimate, and an
+// estimate has no cached value to speak of.
+func TestEstimatedUsageHasNoCachedTokens(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	rec := r.withRecorder()
+
+	key, err := r.st.GetKey(1)
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	res, _ := r.limiter.Admit(key, 0)
+
+	// One content frame and no usage frame, the shape a stream has when the
+	// caller goes away before the final frame.
+	scanner := newSSEScanner(io.NopCloser(strings.NewReader(
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")), true, time.Now)
+	if _, err := io.Copy(io.Discard, scanner); err != nil {
+		t.Fatalf("read stream: %v", err)
+	}
+	st := &state{
+		key: key, info: &requestInfo{Model: "m"}, res: res,
+		start: time.Now(), body: scanner, status: http.StatusOK, streaming: true,
+	}
+	r.proxy.settleAndReport(st)
+
+	got, ok := rec.last()
+	if !ok {
+		t.Fatal("no record was reported")
+	}
+	if !got.Estimated {
+		t.Fatalf("record = %+v, want an estimate for a stream without a usage frame", got)
+	}
+	if got.CachedTokens != nil {
+		t.Fatalf("cached = %v, want nil for estimated usage", got.CachedTokens)
+	}
+}
+
+// The quota is charged the full prompt, cached or not: cached tokens are
+// reporting only, and discounting them is out of scope.
+func TestCachedTokensDoNotReduceTheQuotaCharge(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.PromptTokens, opts.CompletionTokens = 400, 400
+	opts.CachedTokens = intp(380)
+	r := newRig(t, opts)
+	r.setQuota(intp64(800))
+
+	resp := r.post("/v1/chat/completions", `{"model":"m","max_tokens":10}`, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("first request = %d, want 200", resp.StatusCode)
+	}
+
+	key, err := r.st.GetKey(1)
+	if err != nil {
+		t.Fatalf("get key: %v", err)
+	}
+	if got := r.limiter.Peek(key).TotalSpent; got != 800 {
+		t.Fatalf("spent = %d of an 800 quota, want the full 800 charged despite 380 cached", got)
 	}
 }
 

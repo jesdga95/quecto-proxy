@@ -196,8 +196,18 @@ import StatTile from "../components/molecules/StatTile.astro";
     const total = t.prompt_tokens + t.completion_tokens;
     const tok = tokens(total);
     setTile("stat-tokens", tok.value, tok.unit);
-    el("stat-tokens-foot").textContent =
-      `${tokensFlat(t.prompt_tokens)} in, ${tokensFlat(t.completion_tokens)} out`;
+    const foot = el("stat-tokens-foot");
+    let footText = `${tokensFlat(t.prompt_tokens)} in, ${tokensFlat(t.completion_tokens)} out`;
+    if (t.cache_known_prompt_tokens > 0) {
+      const pct = Math.round((t.cached_tokens / t.cache_known_prompt_tokens) * 100);
+      footText = `${tokensFlat(t.prompt_tokens)} in, ${pct}% cached, ${tokensFlat(t.completion_tokens)} out`;
+    }
+    foot.textContent = footText;
+    const unknown = t.prompt_tokens - t.cache_known_prompt_tokens;
+    foot.title =
+      t.cache_known_prompt_tokens > 0 && unknown > 0
+        ? `${tokensFlat(unknown)} of the input had no cache data.`
+        : "";
 
     setTile("stat-ttft", stats.ttft_p95_ms === null ? "0" : millis(stats.ttft_p95_ms));
 

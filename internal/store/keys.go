@@ -225,14 +225,16 @@ func (s *Store) DeleteKey(id int64) error {
 	// The rollup carries no foreign key, and SQLite hands the freed id to the
 	// next key, so park the rows on the sentinel or the successor inherits them.
 	if _, err := tx.Exec(`INSERT INTO usage_hourly
-		(bucket, key_id, model, requests, errors, prompt_tokens, completion_tokens)
-		SELECT bucket, ?, model, requests, errors, prompt_tokens, completion_tokens
+		(bucket, key_id, model, requests, errors, prompt_tokens, completion_tokens, cached_tokens, cache_known_prompt_tokens)
+		SELECT bucket, ?, model, requests, errors, prompt_tokens, completion_tokens, cached_tokens, cache_known_prompt_tokens
 		FROM usage_hourly WHERE key_id = ?
 		ON CONFLICT(bucket, key_id, model) DO UPDATE SET
 			requests = requests + excluded.requests,
 			errors = errors + excluded.errors,
 			prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-			completion_tokens = completion_tokens + excluded.completion_tokens`,
+			completion_tokens = completion_tokens + excluded.completion_tokens,
+			cached_tokens = cached_tokens + excluded.cached_tokens,
+			cache_known_prompt_tokens = cache_known_prompt_tokens + excluded.cache_known_prompt_tokens`,
 		DeletedKeyID, id); err != nil {
 		return fmt.Errorf("delete key %d: %w", id, err)
 	}

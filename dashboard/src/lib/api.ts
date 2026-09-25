@@ -36,6 +36,7 @@ export interface LogEntry {
   stream: boolean;
   prompt_tokens: number | null;
   completion_tokens: number | null;
+  cached_tokens: number | null;
   duration_ms: number;
   ttft_ms: number | null;
 }
@@ -56,6 +57,8 @@ export interface Stats {
     errors: number;
     prompt_tokens: number;
     completion_tokens: number;
+    cached_tokens: number;
+    cache_known_prompt_tokens: number;
   };
   series: Bucket[] | null;
   top_keys:

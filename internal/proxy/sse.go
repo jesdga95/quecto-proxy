@@ -33,6 +33,7 @@ type sseScanner struct {
 
 	mu        sync.Mutex
 	usage     *Usage
+	cached    *int64
 	frames    int
 	firstSeen time.Time
 }
@@ -122,6 +123,7 @@ func (s *sseScanner) keep(frame []byte) bool {
 
 	var chunk struct {
 		Usage   *Usage            `json:"usage"`
+		Timings *timings          `json:"timings"`
 		Choices []json.RawMessage `json:"choices"`
 	}
 	if err := json.Unmarshal(payload, &chunk); err != nil || chunk.Usage == nil {
@@ -130,6 +132,11 @@ func (s *sseScanner) keep(frame []byte) bool {
 
 	s.mu.Lock()
 	s.usage = chunk.Usage
+	// A later usage frame replaces the earlier one whole, cached value included.
+	s.cached = nil
+	if c, ok := cachedTokens(*chunk.Usage, chunk.Timings); ok {
+		s.cached = &c
+	}
 	s.mu.Unlock()
 
 	// Only a usage-only frame is safe to drop. Servers that attach usage to the
@@ -164,6 +171,15 @@ func (s *sseScanner) Usage() (Usage, bool) {
 		return Usage{}, false
 	}
 	return *s.usage, true
+}
+
+func (s *sseScanner) CachedTokens() (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cached == nil {
+		return 0, false
+	}
+	return *s.cached, true
 }
 
 func (s *sseScanner) Frames() int {

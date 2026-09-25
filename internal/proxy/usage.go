@@ -15,6 +15,7 @@ const maxBufferedResponse = 2 << 20
 type bodyReader interface {
 	io.ReadCloser
 	Usage() (Usage, bool)
+	CachedTokens() (int64, bool)
 	Frames() int
 	FirstFrameAt() (time.Time, bool)
 }
@@ -29,6 +30,7 @@ type wholeBodyReader struct {
 	buf     []byte
 	over    bool
 	usage   *Usage
+	cached  *int64
 	seen    bool
 	firstAt time.Time
 	parsed  bool
@@ -70,10 +72,14 @@ func (b *wholeBodyReader) parse() {
 	}
 	b.parsed = true
 	var payload struct {
-		Usage *Usage `json:"usage"`
+		Usage   *Usage   `json:"usage"`
+		Timings *timings `json:"timings"`
 	}
 	if json.Unmarshal(b.buf, &payload) == nil && payload.Usage != nil {
 		b.usage = payload.Usage
+		if c, ok := cachedTokens(*payload.Usage, payload.Timings); ok {
+			b.cached = &c
+		}
 	}
 	b.buf = nil
 }
@@ -85,6 +91,15 @@ func (b *wholeBodyReader) Usage() (Usage, bool) {
 		return Usage{}, false
 	}
 	return *b.usage, true
+}
+
+func (b *wholeBodyReader) CachedTokens() (int64, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cached == nil {
+		return 0, false
+	}
+	return *b.cached, true
 }
 
 func (b *wholeBodyReader) Frames() int { return 0 }

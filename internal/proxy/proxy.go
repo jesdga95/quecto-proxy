@@ -23,16 +23,19 @@ const ctxKeyState ctxKey = iota
 
 // Record is what the proxy observed while serving one request.
 type Record struct {
-	KeyID     int64
-	Model     string
-	Status    int
-	Stream    bool
-	Usage     Usage
-	HasUsage  bool
-	Duration  time.Duration
-	TTFT      time.Duration
-	HasTTFT   bool
-	Estimated bool
+	KeyID    int64
+	Model    string
+	Status   int
+	Stream   bool
+	Usage    Usage
+	HasUsage bool
+	// How much of the prompt the upstream served from its cache. Nil when it
+	// did not say, which is most of the time.
+	CachedTokens *int64
+	Duration     time.Duration
+	TTFT         time.Duration
+	HasTTFT      bool
+	Estimated    bool
 }
 
 // Reporter receives one Record per completed request. It must not block.
@@ -248,6 +251,9 @@ func (p *Proxy) settleAndReport(st *state) {
 		if u, ok := st.body.Usage(); ok {
 			rec.Usage, rec.HasUsage = u, true
 			charge = u.Total()
+			if c, ok := st.body.CachedTokens(); ok {
+				rec.CachedTokens = &c
+			}
 		} else if frames := st.body.Frames(); frames > 0 {
 			// The stream ended without a usage frame, most likely because the
 			// caller went away. Charge for the frames that were produced.

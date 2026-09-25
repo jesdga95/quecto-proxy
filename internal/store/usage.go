@@ -14,6 +14,7 @@ type LogRow struct {
 	Stream           bool
 	PromptTokens     *int64
 	CompletionTokens *int64
+	CachedTokens     *int64
 	DurationMS       int64
 	TTFTMS           *int64
 }
@@ -29,6 +30,10 @@ type hourlyDelta struct {
 	Errors           int64
 	PromptTokens     int64
 	CompletionTokens int64
+	CachedTokens     int64
+	// prompt_tokens over only the requests that reported a cached value, so a
+	// partial hour can still be split into computed, cached, and unknown.
+	CacheKnownPromptTokens int64
 }
 
 // WriteBatch appends log rows and folds them into the hourly rollup and the
@@ -70,6 +75,10 @@ func (s *Store) WriteBatch(rows []LogRow) error {
 			h.CompletionTokens += *r.CompletionTokens
 			d.CompletionTokens += *r.CompletionTokens
 		}
+		if r.CachedTokens != nil && r.PromptTokens != nil {
+			h.CachedTokens += *r.CachedTokens
+			h.CacheKnownPromptTokens += *r.PromptTokens
+		}
 	}
 
 	tx, err := s.DB.Begin()
@@ -79,8 +88,8 @@ func (s *Store) WriteBatch(rows []LogRow) error {
 	defer tx.Rollback()
 
 	insert, err := tx.Prepare(`INSERT INTO request_log
-		(key_id, ts, model, status, stream, prompt_tokens, completion_tokens, duration_ms, ttft_ms)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+		(key_id, ts, model, status, stream, prompt_tokens, completion_tokens, cached_tokens, duration_ms, ttft_ms)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return fmt.Errorf("write usage batch: %w", err)
 	}
@@ -88,26 +97,29 @@ func (s *Store) WriteBatch(rows []LogRow) error {
 
 	for _, r := range rows {
 		if _, err := insert.Exec(r.KeyID, r.TS, r.Model, r.Status, boolInt(r.Stream),
-			nullInt64(r.PromptTokens), nullInt64(r.CompletionTokens), r.DurationMS, nullInt64(r.TTFTMS)); err != nil {
+			nullInt64(r.PromptTokens), nullInt64(r.CompletionTokens), nullInt64(r.CachedTokens), r.DurationMS, nullInt64(r.TTFTMS)); err != nil {
 			return fmt.Errorf("write usage batch: %w", err)
 		}
 	}
 
 	roll, err := tx.Prepare(`INSERT INTO usage_hourly
-		(bucket, key_id, model, requests, errors, prompt_tokens, completion_tokens)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		(bucket, key_id, model, requests, errors, prompt_tokens, completion_tokens, cached_tokens, cache_known_prompt_tokens)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(bucket, key_id, model) DO UPDATE SET
 			requests = requests + excluded.requests,
 			errors = errors + excluded.errors,
 			prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-			completion_tokens = completion_tokens + excluded.completion_tokens`)
+			completion_tokens = completion_tokens + excluded.completion_tokens,
+			cached_tokens = cached_tokens + excluded.cached_tokens,
+			cache_known_prompt_tokens = cache_known_prompt_tokens + excluded.cache_known_prompt_tokens`)
 	if err != nil {
 		return fmt.Errorf("write usage batch: %w", err)
 	}
 	defer roll.Close()
 
 	for k, v := range hourly {
-		if _, err := roll.Exec(k.Bucket, k.KeyID, k.Model, v.Requests, v.Errors, v.PromptTokens, v.CompletionTokens); err != nil {
+		if _, err := roll.Exec(k.Bucket, k.KeyID, k.Model, v.Requests, v.Errors, v.PromptTokens,
+			v.CompletionTokens, v.CachedTokens, v.CacheKnownPromptTokens); err != nil {
 			return fmt.Errorf("write usage batch: %w", err)
 		}
 	}
@@ -192,6 +204,7 @@ type LogEntry struct {
 	Stream           bool   `json:"stream"`
 	PromptTokens     *int64 `json:"prompt_tokens"`
 	CompletionTokens *int64 `json:"completion_tokens"`
+	CachedTokens     *int64 `json:"cached_tokens"`
 	DurationMS       int64  `json:"duration_ms"`
 	TTFTMS           *int64 `json:"ttft_ms"`
 }
@@ -230,7 +243,7 @@ func (s *Store) ListLogs(f LogFilter) ([]LogEntry, *int64, error) {
 	}
 
 	q := `SELECT l.id, l.key_id, COALESCE(k.name, ''), l.ts, COALESCE(l.model, ''),
-		l.status, l.stream, l.prompt_tokens, l.completion_tokens, l.duration_ms, l.ttft_ms
+		l.status, l.stream, l.prompt_tokens, l.completion_tokens, l.cached_tokens, l.duration_ms, l.ttft_ms
 		FROM request_log l LEFT JOIN api_keys k ON k.id = l.key_id`
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -249,9 +262,9 @@ func (s *Store) ListLogs(f LogFilter) ([]LogEntry, *int64, error) {
 	for rows.Next() {
 		var e LogEntry
 		var stream int
-		var pt, ct, ttft sql.NullInt64
+		var pt, ct, cached, ttft sql.NullInt64
 		if err := rows.Scan(&e.ID, &e.KeyID, &e.KeyName, &e.TS, &e.Model,
-			&e.Status, &stream, &pt, &ct, &e.DurationMS, &ttft); err != nil {
+			&e.Status, &stream, &pt, &ct, &cached, &e.DurationMS, &ttft); err != nil {
 			return nil, nil, fmt.Errorf("list logs: %w", err)
 		}
 		e.Stream = stream != 0
@@ -260,6 +273,9 @@ func (s *Store) ListLogs(f LogFilter) ([]LogEntry, *int64, error) {
 		}
 		if ct.Valid {
 			e.CompletionTokens = &ct.Int64
+		}
+		if cached.Valid {
+			e.CachedTokens = &cached.Int64
 		}
 		if ttft.Valid {
 			e.TTFTMS = &ttft.Int64
@@ -284,6 +300,9 @@ type Totals struct {
 	Errors           int64 `json:"errors"`
 	PromptTokens     int64 `json:"prompt_tokens"`
 	CompletionTokens int64 `json:"completion_tokens"`
+	CachedTokens     int64 `json:"cached_tokens"`
+	// prompt_tokens over only the requests that reported a cached value.
+	CacheKnownPromptTokens int64 `json:"cache_known_prompt_tokens"`
 }
 
 type Bucket struct {
@@ -305,9 +324,11 @@ func (s *Store) Totals(from, to int64) (Totals, error) {
 	var t Totals
 	err := s.DB.QueryRow(`SELECT
 		COALESCE(SUM(requests), 0), COALESCE(SUM(errors), 0),
-		COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0)
+		COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+		COALESCE(SUM(cached_tokens), 0), COALESCE(SUM(cache_known_prompt_tokens), 0)
 		FROM usage_hourly WHERE bucket >= ? AND bucket <= ?`, from, to).
-		Scan(&t.Requests, &t.Errors, &t.PromptTokens, &t.CompletionTokens)
+		Scan(&t.Requests, &t.Errors, &t.PromptTokens, &t.CompletionTokens,
+			&t.CachedTokens, &t.CacheKnownPromptTokens)
 	if err != nil {
 		return t, fmt.Errorf("read totals: %w", err)
 	}
@@ -342,9 +363,12 @@ func (s *Store) RecentTotals(from, to int64) (Totals, error) {
 	err := s.DB.QueryRow(`SELECT
 		COUNT(*),
 		COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
-		COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0)
+		COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0),
+		COALESCE(SUM(cached_tokens), 0),
+		COALESCE(SUM(CASE WHEN cached_tokens IS NOT NULL THEN prompt_tokens END), 0)
 		FROM request_log WHERE ts >= ? AND ts <= ?`, from, to).
-		Scan(&t.Requests, &t.Errors, &t.PromptTokens, &t.CompletionTokens)
+		Scan(&t.Requests, &t.Errors, &t.PromptTokens, &t.CompletionTokens,
+			&t.CachedTokens, &t.CacheKnownPromptTokens)
 	if err != nil {
 		return t, fmt.Errorf("read recent totals: %w", err)
 	}

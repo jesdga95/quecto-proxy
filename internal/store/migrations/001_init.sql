@@ -29,6 +29,8 @@ CREATE TABLE request_log (
   stream            INTEGER NOT NULL,
   prompt_tokens     INTEGER,
   completion_tokens INTEGER,
+  -- Prompt tokens the upstream served from its prefix cache. Null when it did not say.
+  cached_tokens     INTEGER,
   duration_ms       INTEGER NOT NULL,
   ttft_ms           INTEGER
 );
@@ -45,6 +47,11 @@ CREATE TABLE usage_hourly (
   errors            INTEGER NOT NULL DEFAULT 0,
   prompt_tokens     INTEGER NOT NULL DEFAULT 0,
   completion_tokens INTEGER NOT NULL DEFAULT 0,
+  -- cached_tokens sums the reported values. cache_known_prompt_tokens sums
+  -- prompt_tokens over only the requests that reported one, so a partial hour
+  -- can still be split into computed, cached, and unknown.
+  cached_tokens             INTEGER NOT NULL DEFAULT 0,
+  cache_known_prompt_tokens INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, key_id, model)
 ) WITHOUT ROWID;
 

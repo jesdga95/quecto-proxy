@@ -287,6 +287,61 @@ func TestPercentileReadsRawRows(t *testing.T) {
 	}
 }
 
+// A bucket can mix rows that reported a cached value with rows that did not,
+// and the totals must keep the two apart.
+func TestCachedTokensFoldIntoTheRollup(t *testing.T) {
+	w, st := newTestWriter(t, 30, 1_000_000)
+
+	cached := func(v int64) *int64 { return &v }
+	w.Report(func() proxy.Record { r := rec(200, 100, 50); r.CachedTokens = cached(40); return r }())
+	w.Report(rec(200, 200, 25))
+	w.Report(func() proxy.Record { r := rec(200, 50, 10); r.CachedTokens = cached(0); return r }())
+	runUntilIdle(t, w)
+
+	logs, _, err := st.ListLogs(store.LogFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("list logs: %v", err)
+	}
+	if len(logs) != 3 {
+		t.Fatalf("wrote %d rows, want 3", len(logs))
+	}
+	// Newest first: the reported zero, the unknown, and the 40.
+	if logs[0].PromptTokens == nil || *logs[0].PromptTokens != 50 {
+		t.Fatalf("row 3 = %+v", logs[0])
+	}
+	if logs[0].CachedTokens == nil || *logs[0].CachedTokens != 0 {
+		t.Fatalf("row 3 cached = %v, want the reported 0", logs[0].CachedTokens)
+	}
+	if logs[1].CachedTokens != nil {
+		t.Fatalf("row 2 cached = %v, want nil for a row that did not report", logs[1].CachedTokens)
+	}
+	if logs[2].CachedTokens == nil || *logs[2].CachedTokens != 40 {
+		t.Fatalf("row 1 cached = %v, want 40", logs[2].CachedTokens)
+	}
+
+	now := time.Now().Unix()
+	want := store.Totals{
+		Requests: 3, PromptTokens: 350, CompletionTokens: 85,
+		CachedTokens: 40, CacheKnownPromptTokens: 150,
+	}
+	totals, err := st.Totals(now-7200, now+3600)
+	if err != nil {
+		t.Fatalf("totals: %v", err)
+	}
+	if totals != want {
+		t.Fatalf("rollup totals = %+v, want %+v", totals, want)
+	}
+
+	// The raw log reads the same rows, so the two must agree on them.
+	recent, err := st.RecentTotals(now-3600, now+60)
+	if err != nil {
+		t.Fatalf("recent totals: %v", err)
+	}
+	if recent != want {
+		t.Fatalf("recent totals = %+v, want the same as the rollup on these rows", recent)
+	}
+}
+
 func TestEstimatedUsageIsStillRecorded(t *testing.T) {
 	w, st := newTestWriter(t, 30, 1_000_000)
 

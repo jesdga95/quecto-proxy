@@ -137,6 +137,10 @@ func (w *Writer) toRow(rec proxy.Record) store.LogRow {
 		p, c := rec.Usage.PromptTokens, rec.Usage.CompletionTokens
 		row.PromptTokens, row.CompletionTokens = &p, &c
 	}
+	// Estimated usage has no cached value, and neither does a reply without one.
+	if rec.HasUsage && rec.CachedTokens != nil {
+		row.CachedTokens = rec.CachedTokens
+	}
 	if rec.HasTTFT {
 		ms := rec.TTFT.Milliseconds()
 		row.TTFTMS = &ms

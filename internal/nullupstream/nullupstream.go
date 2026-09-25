@@ -22,6 +22,11 @@ type Options struct {
 	PromptTokens     int
 	CompletionTokens int
 
+	// Reported as usage.prompt_tokens_details.cached_tokens when non-nil.
+	CachedTokens *int
+	// Reported as a llama.cpp style timings.cache_n sibling of usage when non-nil.
+	TimingsCacheN *int
+
 	// When false, a request carrying stream_options is rejected with 400,
 	// which is how some strict servers behave.
 	SupportsStreamOptions bool
@@ -190,7 +195,7 @@ func (u *Upstream) serveWhole(w http.ResponseWriter, req chatRequest, opts Optio
 	if opts.TTFT > 0 {
 		time.Sleep(opts.TTFT)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"id": "chatcmpl-null", "object": "chat.completion", "created": time.Now().Unix(),
 		"model": opts.Model,
 		"choices": []any{map[string]any{
@@ -199,7 +204,11 @@ func (u *Upstream) serveWhole(w http.ResponseWriter, req chatRequest, opts Optio
 			"finish_reason": "stop",
 		}},
 		"usage": usage(opts),
-	})
+	}
+	if tm := timings(opts); tm != nil {
+		body["timings"] = tm
+	}
+	writeJSON(w, http.StatusOK, body)
 }
 
 func (u *Upstream) serveStream(w http.ResponseWriter, req chatRequest, opts Options) {
@@ -230,10 +239,14 @@ func (u *Upstream) serveStream(w http.ResponseWriter, req chatRequest, opts Opti
 	flush()
 
 	if req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
-		payload, _ := json.Marshal(map[string]any{
+		frame := map[string]any{
 			"id": "chatcmpl-null", "object": "chat.completion.chunk", "created": time.Now().Unix(),
 			"model": opts.Model, "choices": []any{}, "usage": usage(opts),
-		})
+		}
+		if tm := timings(opts); tm != nil {
+			frame["timings"] = tm
+		}
+		payload, _ := json.Marshal(frame)
 		fmt.Fprintf(w, "data: %s\n\n", payload)
 		flush()
 	}
@@ -254,11 +267,24 @@ func chunk(model string, delta map[string]any, finish *string) []byte {
 }
 
 func usage(o Options) map[string]any {
-	return map[string]any{
+	m := map[string]any{
 		"prompt_tokens":     o.PromptTokens,
 		"completion_tokens": o.CompletionTokens,
 		"total_tokens":      o.PromptTokens + o.CompletionTokens,
 	}
+	if o.CachedTokens != nil {
+		m["prompt_tokens_details"] = map[string]any{"cached_tokens": *o.CachedTokens}
+	}
+	return m
+}
+
+// timings emits the llama.cpp block only when a value is set, so a body that
+// does not report one never carries an empty object.
+func timings(o Options) any {
+	if o.TimingsCacheN == nil {
+		return nil
+	}
+	return map[string]any{"cache_n": *o.TimingsCacheN}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

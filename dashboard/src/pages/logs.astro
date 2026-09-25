@@ -49,6 +49,7 @@ import Button from "../components/atoms/Button.astro";
           <th>Model</th>
           <th>Status</th>
           <th class="right">In</th>
+          <th class="right">Cached</th>
           <th class="right">Out</th>
           <th class="right">TTFT</th>
           <th class="right">Duration</th>
@@ -84,6 +85,7 @@ import Button from "../components/atoms/Button.astro";
       <td>${e.model ? `<span class="mono-chip">${esc(e.model)}</span>` : ""}</td>
       <td><span class="code ${statusClass(e.status)}">${e.status}</span></td>
       <td class="right num">${io(e.prompt_tokens)}</td>
+      <td class="right num">${io(e.cached_tokens)}</td>
       <td class="right num">${io(e.completion_tokens)}</td>
       <td class="right num">${esc(millis(e.ttft_ms))}</td>
       <td class="right num">${esc(millis(e.duration_ms))}</td>
