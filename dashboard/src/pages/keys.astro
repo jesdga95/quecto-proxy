@@ -29,7 +29,7 @@ import FormField from "../components/molecules/FormField.astro";
         <col class="w-[228px]" />
         <col class="w-[156px]" />
         <col class="w-[140px]" />
-        <col class="w-[84px]" />
+        <col class="w-[132px]" />
       </colgroup>
       <thead>
         <tr>
@@ -54,6 +54,7 @@ import FormField from "../components/molecules/FormField.astro";
   <!-- Read by the row renderer, since rows are built after the build step that
        inlines these. -->
   <div hidden>
+    <span id="icon-rotate"><Icon name="arrows-clockwise" /></span>
     <span id="icon-revoke"><Icon name="prohibit" /></span>
     <span id="icon-delete"><Icon name="trash" /></span>
   </div>
@@ -123,7 +124,7 @@ import FormField from "../components/molecules/FormField.astro";
 
   <div id="step-done" hidden>
     <div class="px-[18px] pt-[17px]">
-      <h2 class="text-[15px] font-medium">Key created</h2>
+      <h2 id="done-title" class="text-[15px] font-medium">Key created</h2>
       <p class="mt-[3px] text-[12.5px] text-muted">
         Copy it now. Quecto stores only a hash.
       </p>
@@ -144,8 +145,8 @@ import FormField from "../components/molecules/FormField.astro";
       >
         <Icon name="warning-circle" class="mt-px size-4 shrink-0" />
         <span>
-          This is the only time the key is shown. If you lose it, delete this key
-          and create another.
+          This is the only time the key is shown. If you lose it, rotate the key to
+          get a new one.
         </span>
       </div>
 
@@ -169,6 +170,7 @@ import FormField from "../components/molecules/FormField.astro";
   const el = (id: string) => document.getElementById(id)!;
   const modal = el("create-modal");
   const ICON = {
+    rotate: el("icon-rotate").innerHTML,
     revoke: el("icon-revoke").innerHTML,
     delete: el("icon-delete").innerHTML,
   };
@@ -265,13 +267,18 @@ import FormField from "../components/molecules/FormField.astro";
   }
 
   function actions(k: Key): string {
+    const rotate =
+      k.status === "revoked" || k.status === "expired"
+        ? ""
+        : `<button class="icon-btn icon-btn-outline" data-rotate="${k.id}"
+             title="Rotate" aria-label="Rotate ${esc(k.name)}">${ICON.rotate}</button>`;
     const revoke =
       k.status !== "active"
         ? ""
         : `<button class="icon-btn icon-btn-outline" data-revoke="${k.id}"
              title="Revoke" aria-label="Revoke ${esc(k.name)}">${ICON.revoke}</button>`;
     return `<td class="key-actions right">
-      <div class="flex justify-end gap-1.5">${revoke}
+      <div class="flex justify-end gap-1.5">${rotate}${revoke}
         <button class="icon-btn icon-btn-outline icon-btn-danger" data-delete="${k.id}"
           title="Delete" aria-label="Delete ${esc(k.name)}">${ICON.delete}</button>
       </div>
@@ -310,8 +317,20 @@ import FormField from "../components/molecules/FormField.astro";
     const target = (e.target as HTMLElement).closest("button");
     if (!target) return;
 
+    const rotate = target.dataset.rotate;
     const revoke = target.dataset.revoke;
     const remove = target.dataset.delete;
+
+    if (rotate) {
+      if (!confirm("Rotate this key? The current key stops working immediately. Limits and usage stay.")) return;
+      try {
+        const rotated = await api.rotateKey(Number(rotate));
+        showSecret(rotated.secret, "Key rotated");
+      } catch (e) {
+        alert(e instanceof Error ? e.message : "Could not rotate the key.");
+        load();
+      }
+    }
 
     if (revoke) {
       if (!confirm("Revoke this key? Anything using it stops working immediately.")) return;
@@ -324,6 +343,16 @@ import FormField from "../components/molecules/FormField.astro";
       load();
     }
   });
+
+  function showSecret(secret: string, title: string) {
+    el("done-title").textContent = title;
+    el("new-key").textContent = secret;
+    (el("ack") as HTMLInputElement).checked = false;
+    (el("finish") as HTMLButtonElement).disabled = true;
+    el("step-form").hidden = true;
+    el("step-done").hidden = false;
+    modal.hidden = false;
+  }
 
   function openModal() {
     modal.hidden = false;
@@ -382,9 +411,7 @@ import FormField from "../components/molecules/FormField.astro";
         tpm_limit: limitValue("k-tpm"),
         total_token_limit: limitValue("k-total"),
       });
-      el("new-key").textContent = created.secret;
-      el("step-form").hidden = true;
-      el("step-done").hidden = false;
+      showSecret(created.secret, "Key created");
     } catch (e) {
       err.textContent = e instanceof Error ? e.message : "Could not create the key.";
       err.hidden = false;

@@ -170,6 +170,11 @@ export const api = {
   revokeKey: (id: number) =>
     request<Key>(`/keys/${id}/revoke`, { method: "POST" }),
 
+  rotateKey: (id: number) =>
+    request<{ key: Key; secret: string }>(`/keys/${id}/rotate`, {
+      method: "POST",
+    }),
+
   deleteKey: (id: number) => request<void>(`/keys/${id}`, { method: "DELETE" }),
 
   logs: (params: Record<string, string>) => {

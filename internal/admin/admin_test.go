@@ -237,6 +237,62 @@ func TestRevokeAndDelete(t *testing.T) {
 	}
 }
 
+func TestRotateKeepsTheKeyButReplacesTheSecret(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{
+		"name": "laptop", "rpm_limit": 60, "total_token_limit": 1000,
+	}, c)
+	created := decodeBody[struct {
+		Key    keyDTO `json:"key"`
+		Secret string `json:"secret"`
+	}](t, rec)
+	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 400, total_requests = 7 WHERE id = 1"); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+	if err := h.reg.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	rec = h.do("POST", "/quecto/api/keys/1/rotate", nil, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate = %d, body %s", rec.Code, rec.Body)
+	}
+	rotated := decodeBody[struct {
+		Key    keyDTO `json:"key"`
+		Secret string `json:"secret"`
+	}](t, rec)
+
+	if rotated.Secret == "" || rotated.Secret == created.Secret {
+		t.Fatal("rotation did not issue a fresh secret")
+	}
+	if rotated.Key.KeyPrefix == created.Key.KeyPrefix {
+		t.Fatal("the display prefix still shows the old secret")
+	}
+	if _, ok := h.reg.Lookup(keys.Hash(created.Secret)); ok {
+		t.Fatal("the old secret still resolves after rotation")
+	}
+	k, ok := h.reg.Lookup(keys.Hash(rotated.Secret))
+	if !ok {
+		t.Fatal("the registry does not know the rotated secret")
+	}
+	if k.ID != 1 || k.Name != "laptop" || k.RPMLimit == nil || *k.RPMLimit != 60 {
+		t.Fatalf("rotation lost the key's identity or limits: %+v", k)
+	}
+	if k.TokensSpent != 400 || k.TotalRequests != 7 {
+		t.Fatalf("rotation lost usage: spent=%d requests=%d", k.TokensSpent, k.TotalRequests)
+	}
+
+	h.do("POST", "/quecto/api/keys/1/revoke", nil, c)
+	if rec := h.do("POST", "/quecto/api/keys/1/rotate", nil, c); rec.Code != http.StatusConflict {
+		t.Fatalf("rotate revoked = %d, want 409", rec.Code)
+	}
+	if rec := h.do("POST", "/quecto/api/keys/99/rotate", nil, c); rec.Code != http.StatusNotFound {
+		t.Fatalf("rotate missing = %d, want 404", rec.Code)
+	}
+}
+
 func TestExpiredKeyReportsExpired(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()

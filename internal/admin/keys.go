@@ -153,7 +153,7 @@ func (s *Server) handleCreateKey(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"key": s.toDTO(k, now),
-		// The only time the raw key leaves the server.
+		// Only this response and a rotation ever carry the raw key.
 		"secret": raw,
 	})
 }
@@ -266,6 +266,31 @@ func (s *Server) handleRevokeKey(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.toDTO(fresh, s.now().Unix()))
 }
 
+func (s *Server) handleRotateKey(w http.ResponseWriter, r *http.Request) {
+	k, err := s.lookupPathKey(w, r)
+	if err != nil {
+		return
+	}
+	raw, hash, display, err := keys.Generate()
+	if err != nil {
+		writeServerError(w, err)
+		return
+	}
+	rotated, err := s.st.RotateKey(k.ID, hash, display)
+	if err != nil {
+		writeStoreError(w, err)
+		return
+	}
+	if err := s.registry.Reload(); err != nil {
+		writeServerError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"key":    s.toDTO(rotated, s.now().Unix()),
+		"secret": raw,
+	})
+}
+
 func (s *Server) handleDeleteKey(w http.ResponseWriter, r *http.Request) {
 	k, err := s.lookupPathKey(w, r)
 	if err != nil {
@@ -315,6 +340,10 @@ func validLimits(rpm, tpm *int, total *int64) (string, bool) {
 func writeStoreError(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrKeyNotFound) {
 		writeError(w, http.StatusNotFound, "That key no longer exists.")
+		return
+	}
+	if errors.Is(err, store.ErrKeyRevoked) {
+		writeError(w, http.StatusConflict, "A revoked key cannot be rotated. Create a new one instead.")
 		return
 	}
 	writeServerError(w, err)

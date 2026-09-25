@@ -7,7 +7,10 @@ import (
 	"strings"
 )
 
-var ErrKeyNotFound = errors.New("key not found")
+var (
+	ErrKeyNotFound = errors.New("key not found")
+	ErrKeyRevoked  = errors.New("key revoked")
+)
 
 type APIKey struct {
 	ID              int64
@@ -208,6 +211,23 @@ func (s *Store) RevokeKey(id int64, at int64) error {
 		}
 	}
 	return nil
+}
+
+// RotateKey swaps the secret behind a key and keeps everything else, so the old
+// secret stops working while limits, usage, and the live tally carry over.
+func (s *Store) RotateKey(id int64, hash []byte, prefix string) (*APIKey, error) {
+	res, err := s.DB.Exec("UPDATE api_keys SET key_hash = ?, key_prefix = ? WHERE id = ? AND revoked_at IS NULL",
+		hash, prefix, id)
+	if err != nil {
+		return nil, fmt.Errorf("rotate key %d: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		if _, err := s.GetKey(id); err != nil {
+			return nil, err
+		}
+		return nil, ErrKeyRevoked
+	}
+	return s.GetKey(id)
 }
 
 // DeletedKeyID holds the rollup of keys that no longer exist, so their traffic

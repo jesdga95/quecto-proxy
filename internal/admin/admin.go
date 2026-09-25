@@ -119,6 +119,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET "+Prefix+"/keys/{id}", s.auth(s.handleGetKey))
 	mux.Handle("PATCH "+Prefix+"/keys/{id}", s.auth(s.handleUpdateKey))
 	mux.Handle("POST "+Prefix+"/keys/{id}/revoke", s.auth(s.handleRevokeKey))
+	mux.Handle("POST "+Prefix+"/keys/{id}/rotate", s.auth(s.handleRotateKey))
 	mux.Handle("DELETE "+Prefix+"/keys/{id}", s.auth(s.handleDeleteKey))
 	mux.Handle("GET "+Prefix+"/logs", s.auth(s.handleListLogs))
 	mux.Handle("GET "+Prefix+"/stats", s.auth(s.handleStats))

@@ -199,6 +199,7 @@
   .icon-btn {
     display: inline-grid;
     place-items: center;
+    flex-shrink: 0;
     width: 27px;
     height: 27px;
     border-radius: 6px;
@@ -412,7 +413,7 @@
      usage or last-used text changes on refresh cannot shift the columns. */
   .key-table {
     table-layout: fixed;
-    min-width: 960px;
+    min-width: 1008px;
   }
   /* Three stacked lanes set the row height, so the vertical padding comes in. */
   .key-table tbody td {
