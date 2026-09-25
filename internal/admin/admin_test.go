@@ -390,6 +390,51 @@ func TestDeletedKeyUsageStaysInTheTotalsButNotOnTheNextKey(t *testing.T) {
 	}
 }
 
+func TestStatsShortWindowReadsTheRawLog(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{"name": "k"}, c)
+	keyID := decodeBody[struct {
+		Key keyDTO `json:"key"`
+	}](t, rec).Key.ID
+
+	now := time.Now().Unix()
+	prompt, completion := int64(10), int64(20)
+	if err := h.st.WriteBatch([]store.LogRow{
+		// Old enough to sit outside the one-hour window, inside the rollup's.
+		{KeyID: keyID, TS: now - 2*3600, Model: "m", Status: 200,
+			PromptTokens: &prompt, CompletionTokens: &completion, DurationMS: 5},
+		{KeyID: keyID, TS: now - 10*60, Model: "m", Status: 200,
+			PromptTokens: &prompt, CompletionTokens: &completion, DurationMS: 5},
+	}); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+
+	s1h := decodeBody[statsResponse](t, h.do("GET", "/quecto/api/stats?range=1h", nil, c))
+	if s1h.SeriesStep != 300 {
+		t.Fatalf("one-hour series_step = %d, want 300", s1h.SeriesStep)
+	}
+	if want := (store.Totals{Requests: 1, PromptTokens: 10, CompletionTokens: 20}); s1h.Totals != want {
+		t.Fatalf("one-hour totals = %+v, want %+v without the older request", s1h.Totals, want)
+	}
+	if len(s1h.Series) != 1 || s1h.Series[0].Requests != 1 {
+		t.Fatalf("one-hour series = %+v, want a single five-minute bucket with the recent request", s1h.Series)
+	}
+	if len(s1h.TopKeys) != 1 || s1h.TopKeys[0].Requests != 1 {
+		t.Fatalf("one-hour top keys = %+v, want the key with only its recent request", s1h.TopKeys)
+	}
+
+	s24h := decodeBody[statsResponse](t, h.do("GET", "/quecto/api/stats?range=24h", nil, c))
+	if s24h.SeriesStep != 3600 {
+		t.Fatalf("24h series_step = %d, want 3600", s24h.SeriesStep)
+	}
+	// The rollup covers the whole current hour, so both requests count.
+	if want := (store.Totals{Requests: 2, PromptTokens: 20, CompletionTokens: 40}); s24h.Totals != want {
+		t.Fatalf("24h totals = %+v, want %+v from the hourly rollup", s24h.Totals, want)
+	}
+}
+
 func TestQuotaLimitMustBePositive(t *testing.T) {
 	h := newHarness(t)
 	c := h.login()

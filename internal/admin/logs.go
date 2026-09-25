@@ -33,6 +33,7 @@ func (s *Server) handleListLogs(w http.ResponseWriter, r *http.Request) {
 type statsResponse struct {
 	From             int64            `json:"from"`
 	To               int64            `json:"to"`
+	SeriesStep       int64            `json:"series_step"`
 	Totals           store.Totals     `json:"totals"`
 	Series           []store.Bucket   `json:"series"`
 	TopKeys          []store.KeyTotal `json:"top_keys"`
@@ -43,23 +44,57 @@ type statsResponse struct {
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	to := s.now()
-	from := to.Add(-rangeOf(r.URL.Query().Get("range")))
+	d := rangeOf(r.URL.Query().Get("range"))
+	from := to.Add(-d)
 
-	totals, err := s.st.Totals(from.Unix(), to.Unix())
+	var (
+		totals store.Totals
+		series []store.Bucket
+		top    []store.KeyTotal
+		err    error
+	)
+	if d <= time.Hour {
+		// The rollup only has hourly buckets, so a window shorter than that
+		// would count the current partial hour twice. The raw log is finer.
+		step := int64(5 * time.Minute / time.Second)
+		totals, err = s.st.RecentTotals(from.Unix(), to.Unix())
+		if err == nil {
+			series, err = s.st.RecentSeries(from.Unix(), to.Unix(), step)
+		}
+		if err == nil {
+			top, err = s.st.RecentTopKeys(from.Unix(), to.Unix(), 5)
+		}
+		if err != nil {
+			writeServerError(w, err)
+			return
+		}
+		s.writeStats(w, from, to, step, totals, series, top)
+		return
+	}
+
+	step := int64(time.Hour / time.Second)
+	if d > 48*time.Hour {
+		step = int64(24 * time.Hour / time.Second)
+	}
+	totals, err = s.st.Totals(from.Unix(), to.Unix())
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	series, err := s.st.Series(from.Unix(), to.Unix())
+	series, err = s.st.Series(from.Unix(), to.Unix())
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	top, err := s.st.TopKeys(from.Unix(), to.Unix(), 5)
+	top, err = s.st.TopKeys(from.Unix(), to.Unix(), 5)
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
+	s.writeStats(w, from, to, step, totals, series, top)
+}
+
+func (s *Server) writeStats(w http.ResponseWriter, from, to time.Time, step int64, totals store.Totals, series []store.Bucket, top []store.KeyTotal) {
 	ttft, err := s.st.Percentile("ttft_ms", from.Unix(), to.Unix(), 0.95)
 	if err != nil {
 		writeServerError(w, err)
@@ -72,7 +107,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, statsResponse{
-		From: from.Unix(), To: to.Unix(),
+		From: from.Unix(), To: to.Unix(), SeriesStep: step,
 		Totals: totals, Series: series, TopKeys: top,
 		TTFTP95MS: ttft, DurationP95MS: dur,
 		ProxyOverheadP99: s.overhead(),

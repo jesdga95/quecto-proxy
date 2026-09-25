@@ -12,6 +12,7 @@ import StatTile from "../components/molecules/StatTile.astro";
       <p id="page-sub" class="text-[13px] text-muted">Last 24 hours.</p>
     </div>
     <select id="range" class="select w-auto max-md:w-full">
+      <option value="1h">Last hour</option>
       <option value="24h" selected>Last 24 hours</option>
       <option value="7d">Last 7 days</option>
       <option value="30d">Last 30 days</option>
@@ -91,9 +92,9 @@ import StatTile from "../components/molecules/StatTile.astro";
   const HOUR = 3600;
 
   /** The API returns only populated buckets, so gaps are filled here. Without
-      this a single busy hour would stretch across the whole chart. */
-  function fillSeries(from: number, to: number, series: Bucket[]): Bucket[] {
-    const step = to - from > 48 * HOUR ? 24 * HOUR : HOUR;
+      this a single busy hour would stretch across the whole chart. The step
+      the server bucketed at comes along in the response. */
+  function fillSeries(from: number, to: number, series: Bucket[], step: number): Bucket[] {
     const start = Math.floor(from / step) * step;
     const end = Math.floor(to / step) * step;
 
@@ -207,7 +208,10 @@ import StatTile from "../components/molecules/StatTile.astro";
     setTile("stat-overhead", health.proxy_overhead_p99_ms.toFixed(2), "ms");
 
     const daily = stats.to - stats.from > 48 * HOUR;
-    renderChart(fillSeries(stats.from, stats.to, stats.series ?? []), daily);
+    renderChart(
+      fillSeries(stats.from, stats.to, stats.series ?? [], stats.series_step),
+      daily,
+    );
 
     const top = stats.top_keys ?? [];
     const body = el("top-keys");

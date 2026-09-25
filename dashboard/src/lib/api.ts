@@ -50,6 +50,7 @@ export interface Bucket {
 export interface Stats {
   from: number;
   to: number;
+  series_step: number;
   totals: {
     requests: number;
     errors: number;

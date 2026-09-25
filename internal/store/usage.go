@@ -335,6 +335,72 @@ func (s *Store) Series(from, to int64) ([]Bucket, error) {
 	return out, rows.Err()
 }
 
+// RecentTotals reads the raw log rather than the rollup, because the rollup
+// only has hourly buckets and a partial hour would overcount a short window.
+func (s *Store) RecentTotals(from, to int64) (Totals, error) {
+	var t Totals
+	err := s.DB.QueryRow(`SELECT
+		COUNT(*),
+		COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(prompt_tokens), 0), COALESCE(SUM(completion_tokens), 0)
+		FROM request_log WHERE ts >= ? AND ts <= ?`, from, to).
+		Scan(&t.Requests, &t.Errors, &t.PromptTokens, &t.CompletionTokens)
+	if err != nil {
+		return t, fmt.Errorf("read recent totals: %w", err)
+	}
+	return t, nil
+}
+
+// RecentSeries buckets the raw log at a step finer than the hourly rollup, so
+// a short window still has shape on the chart.
+func (s *Store) RecentSeries(from, to, step int64) ([]Bucket, error) {
+	rows, err := s.DB.Query(`SELECT ts - ts % ?, COUNT(*),
+		COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(prompt_tokens), 0) + COALESCE(SUM(completion_tokens), 0)
+		FROM request_log WHERE ts >= ? AND ts <= ?
+		GROUP BY ts - ts % ? ORDER BY ts - ts % ?`, step, from, to, step, step)
+	if err != nil {
+		return nil, fmt.Errorf("read recent series: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Bucket
+	for rows.Next() {
+		var b Bucket
+		if err := rows.Scan(&b.Bucket, &b.Requests, &b.Errors, &b.Tokens); err != nil {
+			return nil, fmt.Errorf("read recent series: %w", err)
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// RecentTopKeys ranks keys from the raw log. A key that is already gone has
+// no row in api_keys, so it folds into the same sentinel row as the rollup.
+func (s *Store) RecentTopKeys(from, to int64, limit int) ([]KeyTotal, error) {
+	rows, err := s.DB.Query(`SELECT CASE WHEN k.id IS NULL THEN ? ELSE l.key_id END AS key_id,
+		COALESCE(k.name, ''),
+		COUNT(*),
+		COALESCE(SUM(l.prompt_tokens), 0) + COALESCE(SUM(l.completion_tokens), 0) AS tokens
+		FROM request_log l LEFT JOIN api_keys k ON k.id = l.key_id
+		WHERE l.ts >= ? AND l.ts <= ?
+		GROUP BY key_id ORDER BY tokens DESC LIMIT ?`, DeletedKeyID, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read recent top keys: %w", err)
+	}
+	defer rows.Close()
+
+	var out []KeyTotal
+	for rows.Next() {
+		var k KeyTotal
+		if err := rows.Scan(&k.KeyID, &k.KeyName, &k.Requests, &k.Tokens); err != nil {
+			return nil, fmt.Errorf("read recent top keys: %w", err)
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 // TopKeys ranks keys, not key and model pairs, so a key that serves more than
 // one model is still a single row.
 func (s *Store) TopKeys(from, to int64, limit int) ([]KeyTotal, error) {
