@@ -42,6 +42,9 @@
   --color-warn-bg: var(--warn-bg);
   --color-crit: var(--crit);
   --color-crit-bg: var(--crit-bg);
+  --color-tok-cached: var(--tok-cached);
+  --color-tok-fresh: var(--tok-fresh);
+  --color-tok-out: var(--tok-out);
 
   --font-sans: "Poppins", ui-sans-serif, -apple-system, BlinkMacSystemFont,
     "Segoe UI", system-ui, sans-serif;
@@ -75,6 +78,11 @@
   --crit-bg: #fdeceb;
   --btn: #0f766e;
   --btn-text: #ffffff;
+  /* The three parts of a token count: input served from cache, input the
+     upstream had to read, and output. */
+  --tok-cached: #0d9488;
+  --tok-fresh: #5eead4;
+  --tok-out: #94a3b8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -99,6 +107,9 @@
     --crit-bg: #3a1f1c;
     --btn: #2dd4bf;
     --btn-text: #0f172a;
+    --tok-cached: #2dd4bf;
+    --tok-fresh: #115e59;
+    --tok-out: #64748b;
   }
 }
 

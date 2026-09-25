@@ -1,0 +1,49 @@
+---
+/* Tokens with their cache share. Every value is filled in from script. */
+const parts = [
+  { key: "cached", label: "cached input", color: "border-tok-cached" },
+  { key: "fresh", label: "fresh input", color: "border-tok-fresh" },
+  { key: "out", label: "output", color: "border-tok-out" },
+];
+---
+
+<div class="card flex flex-col gap-3.5 px-[22px] py-5 max-md:px-4">
+  <div class="flex items-start justify-between gap-4">
+    <div class="flex flex-col gap-0.5">
+      <span class="label">Tokens</span>
+      <span id="tok-total" class="num text-[34px] leading-tight font-medium tracking-tight"
+        >&nbsp;</span
+      >
+      <span id="tok-foot" class="text-[11.5px] text-muted"></span>
+    </div>
+    <div class="flex flex-col items-end gap-0.5 text-right">
+      <span class="label text-accent/80">Cache hit rate</span>
+      <span
+        id="tok-hit"
+        class="num text-[34px] leading-tight font-medium tracking-tight text-accent"
+        >&nbsp;</span
+      >
+      <span id="tok-hit-foot" class="text-[11.5px] text-muted">of input tokens</span>
+    </div>
+  </div>
+
+  <div
+    id="tok-bar"
+    class="flex h-7 gap-[2px] overflow-hidden rounded-md bg-surface-2"
+    role="img"
+  >
+  </div>
+
+  <div class="grid grid-cols-3 gap-3">
+    {
+      parts.map((p) => (
+        <div class:list={["flex min-w-0 flex-col gap-0.5 border-t-2 pt-2", p.color]}>
+          <span id={`tok-${p.key}`} class="num text-[17px] leading-tight">
+            &nbsp;
+          </span>
+          <span class="text-[11.5px] text-muted">{p.label}</span>
+        </div>
+      ))
+    }
+  </div>
+</div>

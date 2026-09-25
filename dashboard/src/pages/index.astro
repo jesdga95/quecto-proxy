@@ -1,6 +1,7 @@
 ---
 import Dashboard from "../layouts/Dashboard.astro";
 import StatTile from "../components/molecules/StatTile.astro";
+import TokenPanel from "../components/molecules/TokenPanel.astro";
 ---
 
 <Dashboard title="Overview" current="overview">
@@ -19,19 +20,19 @@ import StatTile from "../components/molecules/StatTile.astro";
     </select>
   </div>
 
-  <div
-    class="grid grid-cols-[repeat(auto-fit,minmax(168px,1fr))] gap-3 max-md:grid-cols-2 max-md:[&>:last-child]:col-span-2"
-  >
-    <StatTile label="Requests" id="stat-requests" footId="stat-requests-foot" />
-    <StatTile label="Tokens" id="stat-tokens" footId="stat-tokens-foot" />
-    <StatTile label="p95 TTFT" id="stat-ttft" foot="upstream, not proxy" />
-    <StatTile label="Errors" id="stat-errors" footId="stat-errors-foot" />
-    <StatTile
-      label="Proxy overhead"
-      id="stat-overhead"
-      foot="p99 added latency"
-      accent
-    />
+  <div class="grid grid-cols-[1.25fr_1fr] gap-3 max-lg:grid-cols-1">
+    <TokenPanel />
+    <div class="grid grid-cols-2 gap-3">
+      <StatTile label="Requests" id="stat-requests" footId="stat-requests-foot" />
+      <StatTile label="Errors" id="stat-errors" footId="stat-errors-foot" />
+      <StatTile label="p95 TTFT" id="stat-ttft" foot="upstream, not proxy" />
+      <StatTile
+        label="Proxy overhead"
+        id="stat-overhead"
+        foot="p99 added latency"
+        accent
+      />
+    </div>
   </div>
 
   <section class="mt-[30px]">
@@ -79,7 +80,7 @@ import StatTile from "../components/molecules/StatTile.astro";
 </Dashboard>
 
 <script>
-  import { api, type Bucket } from "../lib/api";
+  import { api, type Bucket, type Stats } from "../lib/api";
   import { count, tokens, millis, esc, tokensFlat } from "../lib/format";
 
   const el = (id: string) => document.getElementById(id)!;
@@ -184,6 +185,58 @@ import StatTile from "../components/molecules/StatTile.astro";
       `<span>${esc(fmt(series[series.length - 1]!.bucket))}</span>`;
   }
 
+  /** Segments under this share of the bar are too narrow to carry a label. */
+  const LABEL_MIN = 0.3;
+
+  function renderTokens(t: Stats["totals"]) {
+    const total = t.prompt_tokens + t.completion_tokens;
+    const tok = tokens(total);
+    setTile("tok-total", tok.value, tok.unit);
+    el("tok-foot").textContent =
+      `${tokensFlat(t.prompt_tokens)} in, ${tokensFlat(t.completion_tokens)} out`;
+
+    const known = t.cache_known_prompt_tokens > 0;
+    const fresh = Math.max(0, t.prompt_tokens - t.cached_tokens);
+    if (known) {
+      setTile("tok-hit", String(Math.round((t.cached_tokens / t.cache_known_prompt_tokens) * 100)), "%");
+    } else {
+      el("tok-hit").innerHTML = `<span class="text-muted">&ndash;</span>`;
+    }
+    const unknown = t.prompt_tokens - t.cache_known_prompt_tokens;
+    el("tok-hit-foot").textContent = known ? "of input tokens" : "no cache data yet";
+    el("tok-hit-foot").title =
+      known && unknown > 0 ? `${tokensFlat(unknown)} of the input had no cache data.` : "";
+
+    el("tok-cached").textContent = tokensFlat(t.cached_tokens);
+    el("tok-fresh").textContent = tokensFlat(fresh);
+    el("tok-out").textContent = tokensFlat(t.completion_tokens);
+
+    const segs = [
+      { n: t.cached_tokens, color: "var(--tok-cached)", label: "cached" },
+      { n: fresh, color: "var(--tok-fresh)", label: "fresh" },
+      { n: t.completion_tokens, color: "var(--tok-out)", label: "out" },
+    ];
+    const bar = el("tok-bar");
+    bar.setAttribute(
+      "aria-label",
+      segs.map((s) => `${tokensFlat(s.n)} ${s.label}`).join(", "),
+    );
+    bar.innerHTML =
+      total === 0
+        ? ""
+        : segs
+            .filter((s) => s.n > 0)
+            .map((s) => {
+              const share = s.n / total;
+              const text =
+                share >= LABEL_MIN && s.label === "cached"
+                  ? `<span class="truncate px-2.5 font-mono text-[11.5px] font-medium text-(--btn-text)">${esc(tokensFlat(s.n))} cached</span>`
+                  : "";
+              return `<div class="flex min-w-[3px] items-center" style="width:${(share * 100).toFixed(2)}%;background:${s.color}">${text}</div>`;
+            })
+            .join("");
+  }
+
   async function load() {
     const range = (el("range") as HTMLSelectElement).value;
     const [stats, health] = await Promise.all([api.stats(range), api.health()]);
@@ -191,23 +244,9 @@ import StatTile from "../components/molecules/StatTile.astro";
     const t = stats.totals;
     setTile("stat-requests", count(t.requests));
     el("stat-requests-foot").textContent =
-      t.requests === 0 ? "No requests yet" : `across ${health.key_count} keys`;
+      t.requests === 0 ? "No requests yet" : `across ${health.key_count} ${health.key_count === 1 ? "key" : "keys"}`;
 
-    const total = t.prompt_tokens + t.completion_tokens;
-    const tok = tokens(total);
-    setTile("stat-tokens", tok.value, tok.unit);
-    const foot = el("stat-tokens-foot");
-    let footText = `${tokensFlat(t.prompt_tokens)} in, ${tokensFlat(t.completion_tokens)} out`;
-    if (t.cache_known_prompt_tokens > 0) {
-      const pct = Math.round((t.cached_tokens / t.cache_known_prompt_tokens) * 100);
-      footText = `${tokensFlat(t.prompt_tokens)} in, ${pct}% cached, ${tokensFlat(t.completion_tokens)} out`;
-    }
-    foot.textContent = footText;
-    const unknown = t.prompt_tokens - t.cache_known_prompt_tokens;
-    foot.title =
-      t.cache_known_prompt_tokens > 0 && unknown > 0
-        ? `${tokensFlat(unknown)} of the input had no cache data.`
-        : "";
+    renderTokens(t);
 
     setTile("stat-ttft", stats.ttft_p95_ms === null ? "0" : millis(stats.ttft_p95_ms));
 
