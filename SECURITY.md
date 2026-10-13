@@ -16,11 +16,11 @@ Set `QUECTO_TRUST_PROXY_HEADERS=true` only when something you control sits in fr
 
 | | |
 |---|---|
-| API keys | 238 bits from `crypto/rand`, stored only as SHA-256, compared in constant time, shown once at creation |
+| API keys | 238 bits from `crypto/rand`, stored only as SHA-256 and looked up by that hash, shown once at creation |
 | Admin password | argon2id, 64MB and 3 passes, concurrency-bounded so a flood cannot exhaust memory |
 | Sessions | HttpOnly, `SameSite=Strict`, `Secure` when the request is HTTPS. The signing key folds in the password hash, so changing the password invalidates every existing session |
 | Secrets at rest | `quecto.db` is created `0600`, and the container runs as a non-root user, so the plaintext upstream credential and signing key are not world-readable by default |
-| CSRF | `SameSite=Strict` plus JSON-only request bodies. There is no synchroniser token |
+| CSRF | `SameSite=Strict`, and every write must be sent as `application/json`, which a cross-origin page cannot do without a CORS preflight the API never grants. There is no synchroniser token |
 | XSS | Every user-controlled string is escaped before reaching the DOM. No inline event handlers, no external scripts |
 | Path traversal | The dashboard is served from an embedded filesystem, so there is no path to escape to |
 | Prompt content | Never written to disk. Logs hold metadata only, and there is no setting to change that |
@@ -42,4 +42,4 @@ These are real, and accepted for now.
 
 ## Deploying it sensibly
 
-Terminate TLS in front. Give the container its own volume. Keep `/admin` off the public internet if you can, or behind an additional auth layer. Set an expiry and a lifetime token quota on every key you hand out, so a leaked one has a bounded cost rather than an open tab. Watch the Logs page for `401` and `429` patterns you did not expect.
+Terminate TLS in front. Give the container its own volume. Keep the dashboard port (`11313`) off the public internet if you can, or behind an additional auth layer. If you share one port, that means both `/admin` and `/quecto/api`. Set an expiry and a lifetime token quota on every key you hand out, so a leaked one has a bounded cost rather than an open tab. Watch the Logs page for `401` and `429` patterns you did not expect.

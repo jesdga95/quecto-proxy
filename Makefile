@@ -19,7 +19,8 @@ test:
 bench:
 	go test -bench=. -benchtime=300x -run='^$$' ./internal/...
 
-## run: a null upstream and the proxy, for poking at it locally
+## run: the proxy, which needs QUECTO_UPSTREAM_URL and QUECTO_ADMIN_PASSWORD set.
+## For a fake upstream, `go run ./cmd/nullupstream` serves one on :8000.
 run: build
 	./$(BINARY)
 

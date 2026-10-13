@@ -80,8 +80,13 @@ Quecto is built for one specific case: one self-hosted model server, exposed pub
 | `QUECTO_DB_PATH` | `./quecto.db` | |
 | `QUECTO_UPSTREAM_API_KEY` | | Swapped in for the caller's key on the way out |
 | `QUECTO_LOG_RETENTION_DAYS` | `30` | Hourly totals outlive raw rows, so charts stay long range |
+| `QUECTO_LOG_MAX_ROWS` | `1000000` | Cap on raw log rows, whichever of this and retention hits first |
+| `QUECTO_DEFAULT_MAX_TOKENS` | `2048` | Reserved against token limits when a request names no `max_tokens` |
+| `QUECTO_UPSTREAM_HEADER_TIMEOUT` | `120s` | How long to wait for the upstream to start replying |
+| `QUECTO_TRUST_PROXY_HEADERS` | `false` | Believe `X-Forwarded-Proto` and `X-Forwarded-For`. Only behind a proxy you control |
+| `QUECTO_SESSION_SECRET` | generated | Signs dashboard sessions. Left unset, one is generated and kept in the database |
 
-Everything but the listen address and database path is also editable from the dashboard. The rest live in [`internal/config`](internal/config/config.go).
+The upstream URL and key, default max tokens, log retention and log max rows are also editable from the dashboard, and a value saved there wins over the environment. The rest are read at startup. See [`internal/config`](internal/config/config.go).
 
 ## Some technical details
 
