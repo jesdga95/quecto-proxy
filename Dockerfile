@@ -23,6 +23,7 @@ RUN mkdir /data
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /quecto /quecto
+COPY LICENSE NOTICE /
 COPY --from=build --chown=65532:65532 /data /data
 
 ENV QUECTO_LISTEN=:11312 \

@@ -116,3 +116,7 @@ make bench   # roughly +50us per request, measured against a null upstream
 The dashboard is never committed; `docker build` always compiles it from source. More in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Quecto terminates no TLS and is meant to sit behind something that does. Threat model and known limitations: [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE). Third-party components bundled into the binary and image, including the Poppins font (SIL OFL 1.1), are listed with their licenses in [NOTICE](NOTICE).
