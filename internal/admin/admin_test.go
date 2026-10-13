@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -76,6 +77,7 @@ func (h *harness) do(method, path string, body any, cookie *http.Cookie) *httpte
 		}
 	}
 	req := httptest.NewRequest(method, path, &buf)
+	req.Header.Set("Content-Type", "application/json")
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
@@ -114,6 +116,40 @@ func TestAuthRequired(t *testing.T) {
 		if rec := h.do("GET", path, nil, nil); rec.Code != http.StatusUnauthorized {
 			t.Errorf("GET %s without a cookie = %d, want 401", path, rec.Code)
 		}
+	}
+}
+
+// A cross-origin page can only send writes a browser does without a preflight:
+// forms and text/plain. Each must be refused even with a valid cookie.
+func TestWritesWithoutJSONContentTypeAreRefused(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+	h.do("POST", "/quecto/api/keys", map[string]any{"name": "victim"}, c)
+
+	for _, w := range []struct{ method, path, ct, body string }{
+		{"POST", "/quecto/api/keys/1/rotate", "text/plain", ""},
+		{"POST", "/quecto/api/keys/1/revoke", "", ""},
+		{"POST", "/quecto/api/keys", "text/plain", `{"name":"x=","pad":"}`},
+		{"POST", "/quecto/api/keys", "application/x-www-form-urlencoded", "name=x"},
+		{"POST", "/quecto/api/session", "text/plain", `{"password":"` + testPassword + `"}`},
+	} {
+		req := httptest.NewRequest(w.method, w.path, strings.NewReader(w.body))
+		if w.ct != "" {
+			req.Header.Set("Content-Type", w.ct)
+		}
+		req.AddCookie(c)
+		rec := httptest.NewRecorder()
+		h.mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("%s %s as %q = %d, want 415", w.method, w.path, w.ct, rec.Code)
+		}
+	}
+
+	if got := decodeBody[keyDTO](t, h.do("GET", "/quecto/api/keys/1", nil, c)); got.Status != "active" {
+		t.Fatalf("key status after refused writes = %q, want active", got.Status)
+	}
+	if rec := h.do("POST", "/quecto/api/keys/1/revoke", nil, c); rec.Code != http.StatusOK {
+		t.Fatalf("JSON revoke = %d, body %s", rec.Code, rec.Body)
 	}
 }
 

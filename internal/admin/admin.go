@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"mime"
 	"net/http"
 	"sync"
 	"time"
@@ -130,7 +131,23 @@ func (s *Server) Handler() http.Handler {
 	// Everything reaching this mount is an API call, so a miss answers the way
 	// the routes above do rather than as the router's plain text.
 	mux.Handle("/", notFoundHandler())
-	return mux
+	return requireJSON(mux)
+}
+
+// requireJSON refuses state-changing requests not declared as JSON. A
+// cross-origin page cannot set that header without a CORS preflight, which
+// this API never grants, so a form or text/plain post cannot ride the cookie.
+func requireJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || mt != "application/json" {
+				writeError(w, http.StatusUnsupportedMediaType, "Send the request as application/json.")
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) rotatePassword(hash string) {

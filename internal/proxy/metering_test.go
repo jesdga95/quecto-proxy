@@ -210,6 +210,26 @@ func TestNonStreamingUsageIsCaptured(t *testing.T) {
 	}
 }
 
+// A reply too large to buffer hides its usage block. It must still cost the
+// estimate, or a big enough reply would be free against TPM and the quota.
+func TestOversizedReplyIsChargedItsEstimate(t *testing.T) {
+	opts := nullupstream.DefaultOptions()
+	opts.Model = strings.Repeat("m", maxBufferedResponse+1)
+	r := newRig(t, opts)
+	rec := r.withRecorder()
+
+	body := `{"model":"gpt-x","max_tokens":500,"messages":[]}`
+	resp := r.post("/v1/chat/completions", body, r.secret)
+	io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	got, _ := rec.waitForRecord()
+	want := int64(len(body)/3 + 500)
+	if !got.Estimated || got.HasUsage || got.Usage.Total() != want {
+		t.Fatalf("record = estimated %v, usage %+v, want an estimate of %d", got.Estimated, got.Usage, want)
+	}
+}
+
 // A prompt cache hit is a subset of the prompt count, so the record must carry
 // it without moving prompt_tokens or the charge.
 func TestStreamedCachedTokensAreRecordedWithoutTouchingTheStream(t *testing.T) {

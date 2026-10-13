@@ -260,6 +260,11 @@ func (p *Proxy) settleAndReport(st *state) {
 			charge = int64(frames)
 			rec.Usage = Usage{CompletionTokens: charge, TotalTokens: charge}
 			rec.Estimated = true
+		} else if wb, ok := st.body.(*wholeBodyReader); ok && wb.overflowed() {
+			// Too large to read usage back from, so it costs what was held for it.
+			charge = st.info.estimate()
+			rec.Usage = Usage{CompletionTokens: charge, TotalTokens: charge}
+			rec.Estimated = true
 		}
 		if at, ok := st.body.FirstFrameAt(); ok {
 			rec.TTFT, rec.HasTTFT = at.Sub(st.start), true

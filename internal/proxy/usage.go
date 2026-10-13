@@ -7,8 +7,8 @@ import (
 	"time"
 )
 
-// Responses beyond this are streamed through without usage accounting. A
-// non-streamed completion this large is far outside normal traffic.
+// Responses beyond this are passed through unparsed and charged their estimate.
+// A non-streamed completion this large is far outside normal traffic.
 const maxBufferedResponse = 2 << 20
 
 // bodyReader is the part of a wrapped response body the proxy reads back from.
@@ -82,6 +82,13 @@ func (b *wholeBodyReader) parse() {
 		}
 	}
 	b.buf = nil
+}
+
+// overflowed reports whether the reply outgrew the buffer, leaving usage unread.
+func (b *wholeBodyReader) overflowed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.over
 }
 
 func (b *wholeBodyReader) Usage() (Usage, bool) {

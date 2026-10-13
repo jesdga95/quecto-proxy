@@ -115,7 +115,8 @@ export class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(BASE + path, {
     credentials: "same-origin",
-    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    // The API refuses any write not sent as JSON, even one with no body.
+    headers: { "Content-Type": "application/json" },
     ...init,
   });
 
