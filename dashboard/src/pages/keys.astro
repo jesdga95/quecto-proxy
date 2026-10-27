@@ -29,7 +29,7 @@ import FormField from "../components/molecules/FormField.astro";
         <col class="w-[228px]" />
         <col class="w-[156px]" />
         <col class="w-[140px]" />
-        <col class="w-[132px]" />
+        <col class="w-[166px]" />
       </colgroup>
       <thead>
         <tr>
@@ -54,6 +54,7 @@ import FormField from "../components/molecules/FormField.astro";
   <!-- Read by the row renderer, since rows are built after the build step that
        inlines these. -->
   <div hidden>
+    <span id="icon-edit"><Icon name="pencil-simple" /></span>
     <span id="icon-rotate"><Icon name="arrows-clockwise" /></span>
     <span id="icon-revoke"><Icon name="prohibit" /></span>
     <span id="icon-delete"><Icon name="trash" /></span>
@@ -163,13 +164,90 @@ import FormField from "../components/molecules/FormField.astro";
   </div>
 </Modal>
 
+<Modal id="edit-modal" labelledBy="edit-title">
+  <div class="flex items-start justify-between gap-4 px-[18px] pt-[17px]">
+    <div>
+      <h2 id="edit-title" class="text-[15px] font-medium">Edit API key</h2>
+      <p id="edit-sub" class="mt-[3px] text-[12.5px] text-muted"></p>
+    </div>
+    <button class="icon-btn" data-close aria-label="Close">
+      <Icon name="x" class="size-[15px]" />
+    </button>
+  </div>
+
+  <div class="flex flex-col gap-3.5 p-[18px]">
+    <FormField label="Name" for="e-name">
+      <input class="input" id="e-name" placeholder="Laptop, n8n, phone" />
+    </FormField>
+
+    <FormField label="Expires" for="e-exp">
+      <select class="select" id="e-exp">
+        <option value="keep">Keep the current date</option>
+        <option value="0">Never</option>
+        <option value="7">In 7 days</option>
+        <option value="30">In 30 days</option>
+        <option value="90">In 90 days</option>
+        <option value="365">In a year</option>
+      </select>
+    </FormField>
+
+    <div class="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
+      <FormField label="Requests per minute" for="e-rpm">
+        <input class="input num" id="e-rpm" inputmode="numeric" placeholder="No limit" />
+      </FormField>
+      <FormField label="Tokens per minute" for="e-tpm">
+        <input class="input num" id="e-tpm" inputmode="numeric" placeholder="No limit" />
+      </FormField>
+    </div>
+
+    <FormField
+      label="Total token limit"
+      for="e-total"
+      hint="Setting one below what the key has already spent stops it at once."
+    >
+      <input
+        class="input num"
+        id="e-total"
+        inputmode="numeric"
+        placeholder="No limit"
+      />
+    </FormField>
+
+    <label id="e-reset-row" class="flex items-start gap-2 text-[12.5px] text-ink-2">
+      <input type="checkbox" id="e-reset" class="mt-[3px]" />
+      <span>
+        Restart its spent token count
+        <span class="block text-[11.5px] text-muted">
+          Brings a key that spent its quota back to work. Its logged usage is
+          left alone.
+        </span>
+      </span>
+    </label>
+
+    <span class="text-[11.5px] text-muted">
+      Leave a limit empty for no limit. Everything the key has spent, and the key
+      itself, stay as they are.
+    </span>
+    <p id="edit-error" hidden class="text-[12.5px] text-crit"></p>
+  </div>
+
+  <div
+    class="flex justify-end gap-2 rounded-b-[11px] border-t border-line bg-surface-2 px-[18px] py-3"
+  >
+    <Button variant="ghost" data-close>Cancel</Button>
+    <Button id="do-edit">Save</Button>
+  </div>
+</Modal>
+
 <script>
-  import { api, type Key } from "../lib/api";
+  import { api, type Key, type KeyPatch } from "../lib/api";
   import { ago, date, daysUntil, esc, count, tokensTight } from "../lib/format";
 
   const el = (id: string) => document.getElementById(id)!;
   const modal = el("create-modal");
+  const editModal = el("edit-modal");
   const ICON = {
+    edit: el("icon-edit").innerHTML,
     rotate: el("icon-rotate").innerHTML,
     revoke: el("icon-revoke").innerHTML,
     delete: el("icon-delete").innerHTML,
@@ -266,7 +344,11 @@ import FormField from "../components/molecules/FormField.astro";
     </td>`;
   }
 
+  /** Every key gets an editor, a retired one included: the name and the limits
+   * are bookkeeping that stays meaningful once the key cannot serve traffic. */
   function actions(k: Key): string {
+    const edit = `<button class="icon-btn icon-btn-outline" data-edit="${k.id}"
+        title="Edit" aria-label="Edit ${esc(k.name)}">${ICON.edit}</button>`;
     const rotate =
       k.status === "revoked" || k.status === "expired"
         ? ""
@@ -278,7 +360,7 @@ import FormField from "../components/molecules/FormField.astro";
         : `<button class="icon-btn icon-btn-outline" data-revoke="${k.id}"
              title="Revoke" aria-label="Revoke ${esc(k.name)}">${ICON.revoke}</button>`;
     return `<td class="key-actions right">
-      <div class="flex justify-end gap-1.5">${rotate}${revoke}
+      <div class="flex justify-end gap-1.5">${edit}${rotate}${revoke}
         <button class="icon-btn icon-btn-outline icon-btn-danger" data-delete="${k.id}"
           title="Delete" aria-label="Delete ${esc(k.name)}">${ICON.delete}</button>
       </div>
@@ -307,8 +389,20 @@ import FormField from "../components/molecules/FormField.astro";
     </tr>`;
   }
 
+  /** What the last poll saw, so the edit button on a row can find the key behind
+   * it without carrying every field through a data attribute. The 5 second
+   * refresh replaces the rows and this with them. */
+  let keysById = new Map<number, Key>();
+
+  /** The key as it was when the dialog was filled, which is what a save is
+   * diffed against. Held apart from the poll's map so a refresh while the dialog
+   * is open cannot change what the person on screen is looking at. */
+  let editingId = 0;
+  let editingBase: Key | null = null;
+
   async function load() {
     const { keys } = await api.keys();
+    keysById = new Map(keys.map((k) => [k.id, k]));
     el("keys-empty").hidden = keys.length > 0;
     el("key-rows").innerHTML = keys.map(row).join("");
   }
@@ -317,9 +411,16 @@ import FormField from "../components/molecules/FormField.astro";
     const target = (e.target as HTMLElement).closest("button");
     if (!target) return;
 
+    const edit = target.dataset.edit;
     const rotate = target.dataset.rotate;
     const revoke = target.dataset.revoke;
     const remove = target.dataset.delete;
+
+    if (edit) {
+      const k = keysById.get(Number(edit));
+      if (k) openEdit(k);
+      return;
+    }
 
     if (rotate) {
       if (!confirm("Rotate this key? The current key stops working immediately. Limits and usage stay.")) return;
@@ -373,6 +474,41 @@ import FormField from "../components/molecules/FormField.astro";
     load();
   }
 
+  /** Prefilled rather than blank, since the dialog edits what is already set and
+   * a field left empty means taking that limit away. */
+  function openEdit(k: Key) {
+    editingId = k.id;
+    editingBase = k;
+    (el("edit-sub") as HTMLElement).textContent = k.key_prefix;
+    (el("e-name") as HTMLInputElement).value = k.name;
+    (el("e-rpm") as HTMLInputElement).value = k.rpm_limit === null ? "" : String(k.rpm_limit);
+    (el("e-tpm") as HTMLInputElement).value = k.tpm_limit === null ? "" : String(k.tpm_limit);
+    (el("e-total") as HTMLInputElement).value =
+      k.total_token_limit === null ? "" : String(k.total_token_limit);
+
+    // The create dialog can only offer dates from today, so the one already on
+    // the key is shown as itself and staying put means sending nothing.
+    const keep = el("e-exp").querySelector("option[value='keep']")!;
+    keep.textContent =
+      k.expires_at === null
+        ? "Never"
+        : daysUntil(k.expires_at) < 0
+          ? `Keep ${date(k.expires_at)}, expired`
+          : `Keep ${date(k.expires_at)}`;
+    (el("e-exp") as HTMLSelectElement).value = "keep";
+
+    el("e-reset-row").hidden = k.total_token_limit === null;
+    (el("e-reset") as HTMLInputElement).checked = false;
+    el("edit-error").hidden = true;
+    editModal.hidden = false;
+    (el("e-name") as HTMLInputElement).focus();
+  }
+
+  function closeEdit() {
+    editModal.hidden = true;
+    load();
+  }
+
   el("open-create").addEventListener("click", openModal);
 
   /** Only the close and cancel controls dismiss the dialog. A click that lands
@@ -380,14 +516,32 @@ import FormField from "../components/molecules/FormField.astro";
   modal.addEventListener("click", (e) => {
     if ((e.target as HTMLElement).closest("[data-close]")) closeModal();
   });
+  editModal.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("[data-close]")) closeEdit();
+  });
 
   // Escape backs out of the form only. Once the key is on screen it is shown
   // for the last time, so leaving takes the acknowledged Done button.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && !modal.hidden && !el("step-form").hidden) {
-      closeModal();
-    }
+    if (e.key !== "Escape") return;
+    if (!editModal.hidden) closeEdit();
+    else if (!modal.hidden && !el("step-form").hidden) closeModal();
   });
+
+  /** Empty means no limit. Anything else that is not a whole number of at least
+   * one is refused here rather than sent, so a stray letter cannot quietly take a
+   * limit away, and the wording is the server's own from validLimits. */
+  function limitField(
+    id: string,
+    msg: string,
+  ): { ok: true; value: number | null } | { ok: false; msg: string } {
+    const raw = (el(id) as HTMLInputElement).value.replace(/[,_\s]/g, "").trim();
+    if (raw === "") return { ok: true, value: null };
+    const n = Number(raw);
+    return Number.isSafeInteger(n) && n >= 1
+      ? { ok: true, value: n }
+      : { ok: false, msg };
+  }
 
   function limitValue(id: string): number | null {
     const raw = (el(id) as HTMLInputElement).value.replace(/[,_\s]/g, "").trim();
@@ -419,6 +573,65 @@ import FormField from "../components/molecules/FormField.astro";
       btn.disabled = false;
     }
   });
+
+  el("do-edit").addEventListener("click", async () => {
+    const btn = el("do-edit") as HTMLButtonElement;
+    const err = el("edit-error");
+    const was = editingBase;
+    if (!was) {
+      closeEdit();
+      return;
+    }
+    err.hidden = true;
+
+    const rpm = limitField("e-rpm", "Requests per minute must be at least 1, or left empty for no limit.");
+    if (!rpm.ok) return refuseEdit(err, rpm.msg);
+    const tpm = limitField("e-tpm", "Tokens per minute must be at least 1, or left empty for no limit.");
+    if (!tpm.ok) return refuseEdit(err, tpm.msg);
+    const total = limitField("e-total", "The total token limit must be at least 1, or left empty for no limit.");
+    if (!total.ok) return refuseEdit(err, total.msg);
+
+    // Only what differs is sent, so a dialog saved unchanged cannot overwrite a
+    // limit another tab moved while it was open.
+    const patch: KeyPatch = { name: (el("e-name") as HTMLInputElement).value };
+    if (rpm.value !== was.rpm_limit) {
+      if (rpm.value === null) patch.clear_rpm_limit = true;
+      else patch.rpm_limit = rpm.value;
+    }
+    if (tpm.value !== was.tpm_limit) {
+      if (tpm.value === null) patch.clear_tpm_limit = true;
+      else patch.tpm_limit = tpm.value;
+    }
+    if (total.value !== was.total_token_limit) {
+      if (total.value === null) patch.clear_total_token_limit = true;
+      else patch.total_token_limit = total.value;
+    }
+
+    const days = (el("e-exp") as HTMLSelectElement).value;
+    if (days === "0") {
+      if (was.expires_at !== null) patch.clear_expiry = true;
+    } else if (days !== "keep") {
+      patch.expires_at = Math.floor(Date.now() / 1000) + Number(days) * 86400;
+    }
+    if ((el("e-reset") as HTMLInputElement).checked) patch.reset_tokens_spent = true;
+
+    btn.disabled = true;
+    try {
+      await api.updateKey(editingId, patch);
+      closeEdit();
+    } catch (e) {
+      refuseEdit(err, e instanceof Error ? e.message : "Could not save the key.");
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  /** Shows a refusal in the dialog and leaves it open, so what was typed is not
+   * lost to a closed form. */
+  function refuseEdit(err: HTMLElement, msg: string): void {
+    err.textContent = msg;
+    err.hidden = false;
+  }
 
   el("ack").addEventListener("change", (e) => {
     (el("finish") as HTMLButtonElement).disabled = !(e.target as HTMLInputElement).checked;

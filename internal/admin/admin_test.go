@@ -566,6 +566,132 @@ func TestUpdateClearsLimitsAndExpiry(t *testing.T) {
 	}
 }
 
+// The dashboard's editor sends only what changed, so a rename has to land on the
+// row and on the registry copy without disturbing the secret, the limits or what
+// the key has already spent.
+func TestRenameKeyKeepsTheKey(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("POST", "/quecto/api/keys", map[string]any{
+		"name": "laptop", "rpm_limit": 60, "total_token_limit": 1000,
+	}, c)
+	created := decodeBody[struct {
+		Key    keyDTO `json:"key"`
+		Secret string `json:"secret"`
+	}](t, rec)
+	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 400, total_requests = 7 WHERE id = 1"); err != nil {
+		t.Fatalf("seed usage: %v", err)
+	}
+	if err := h.reg.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+
+	rec = h.do("PATCH", "/quecto/api/keys/1", map[string]any{"name": "  work laptop  "}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename = %d, body %s", rec.Code, rec.Body)
+	}
+	got := decodeBody[keyDTO](t, rec)
+	if got.Name != "work laptop" {
+		t.Fatalf("name = %q, want it trimmed", got.Name)
+	}
+	if got.KeyPrefix != created.Key.KeyPrefix {
+		t.Fatalf("key prefix = %q, want the secret left alone", got.KeyPrefix)
+	}
+	if got.RPMLimit == nil || *got.RPMLimit != 60 {
+		t.Fatalf("rpm limit = %v, want 60", got.RPMLimit)
+	}
+	if got.TotalTokenLimit == nil || *got.TotalTokenLimit != 1000 {
+		t.Fatalf("total token limit = %v, want 1000", got.TotalTokenLimit)
+	}
+
+	// The proxy reads its keys out of the registry, so the new name has to reach
+	// it without a restart or the log keeps calling the key what it was.
+	k, ok := h.reg.Lookup(keys.Hash(created.Secret))
+	if !ok {
+		t.Fatal("the renamed key vanished from the registry")
+	}
+	if k.Name != "work laptop" || k.TokensSpent != 400 || k.TotalRequests != 7 {
+		t.Fatalf("registry copy = %+v, want the new name over its spend and totals", k)
+	}
+
+	if rec := h.do("PATCH", "/quecto/api/keys/1", map[string]any{"name": "   "}, c); rec.Code != http.StatusBadRequest {
+		t.Fatalf("rename to spaces = %d, want 400", rec.Code)
+	}
+	if rec := h.do("PATCH", "/quecto/api/keys/99", map[string]any{"name": "ghost"}, c); rec.Code != http.StatusNotFound {
+		t.Fatalf("rename of a key that is gone = %d, want 404", rec.Code)
+	}
+}
+
+// A limit that is changed arrives as a new number rather than a clear flag, and
+// a dialog saved with nothing touched sends no field at all.
+func TestEditKeySendsOnlyWhatChanged(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	exp := time.Now().Add(24 * time.Hour).Unix()
+	h.do("POST", "/quecto/api/keys", map[string]any{
+		"name": "k", "expires_at": exp, "rpm_limit": 10, "tpm_limit": 20,
+	}, c)
+
+	rec := h.do("PATCH", "/quecto/api/keys/1", map[string]any{"rpm_limit": 30}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("edit = %d, body %s", rec.Code, rec.Body)
+	}
+	got := decodeBody[keyDTO](t, rec)
+	if got.RPMLimit == nil || *got.RPMLimit != 30 {
+		t.Fatalf("rpm limit = %v, want 30", got.RPMLimit)
+	}
+	if got.TPMLimit == nil || *got.TPMLimit != 20 {
+		t.Fatalf("tpm limit = %v, want it left at 20", got.TPMLimit)
+	}
+	if got.ExpiresAt == nil || *got.ExpiresAt != exp {
+		t.Fatalf("expiry = %v, want it left at %d", got.ExpiresAt, exp)
+	}
+
+	noop := decodeBody[keyDTO](t, h.do("PATCH", "/quecto/api/keys/1", map[string]any{}, c))
+	if noop.Name != "k" || noop.RPMLimit == nil || *noop.RPMLimit != 30 {
+		t.Fatalf("an empty patch changed the key: %+v", noop)
+	}
+
+	for _, bad := range []map[string]any{
+		{"rpm_limit": 0},
+		{"tpm_limit": -5},
+		{"total_token_limit": 0},
+		{"expires_at": time.Now().Add(-time.Hour).Unix()},
+	} {
+		if rec := h.do("PATCH", "/quecto/api/keys/1", bad, c); rec.Code != http.StatusBadRequest {
+			t.Errorf("edit %v = %d, want 400", bad, rec.Code)
+		}
+	}
+}
+
+// Raising the quota is the other way back from a spent one, and the editor offers
+// it as a plain edit of the number rather than a reset.
+func TestRaisingASpentQuotaRevivesTheKey(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	h.do("POST", "/quecto/api/keys", map[string]any{"name": "capped", "total_token_limit": 1000}, c)
+	if _, err := h.st.DB.Exec("UPDATE api_keys SET tokens_spent = 1000 WHERE id = 1"); err != nil {
+		t.Fatalf("seed spend: %v", err)
+	}
+	if err := h.reg.Reload(); err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if got := decodeBody[keyDTO](t, h.do("GET", "/quecto/api/keys/1", nil, c)); got.Status != "exhausted" {
+		t.Fatalf("status = %q, want exhausted before the raise", got.Status)
+	}
+
+	rec := h.do("PATCH", "/quecto/api/keys/1", map[string]any{"total_token_limit": 2000}, c)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("raise = %d, body %s", rec.Code, rec.Body)
+	}
+	if got := decodeBody[keyDTO](t, rec); got.Status != "active" {
+		t.Fatalf("status after the raise = %q, want active", got.Status)
+	}
+}
+
 func TestPasswordChangeInvalidatesOtherSessions(t *testing.T) {
 	h := newHarness(t)
 	old := h.login()

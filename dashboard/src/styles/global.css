@@ -424,7 +424,7 @@
      usage or last-used text changes on refresh cannot shift the columns. */
   .key-table {
     table-layout: fixed;
-    min-width: 1008px;
+    min-width: 1042px;
   }
   /* Three stacked lanes set the row height, so the vertical padding comes in. */
   .key-table tbody td {

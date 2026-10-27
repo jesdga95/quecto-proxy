@@ -26,6 +26,22 @@ export interface Key {
   };
 }
 
+/** The fields a key edit may carry. Every one is optional: a field left out is
+ * left alone, and a limit is taken away with its clear flag rather than by
+ * sending a number, so an empty box and no box at all stay distinguishable. */
+export interface KeyPatch {
+  name?: string;
+  expires_at?: number;
+  rpm_limit?: number;
+  tpm_limit?: number;
+  total_token_limit?: number;
+  clear_expiry?: boolean;
+  clear_rpm_limit?: boolean;
+  clear_tpm_limit?: boolean;
+  clear_total_token_limit?: boolean;
+  reset_tokens_spent?: boolean;
+}
+
 export interface LogEntry {
   id: number;
   key_id: number;
@@ -174,6 +190,12 @@ export const api = {
   rotateKey: (id: number) =>
     request<{ key: Key; secret: string }>(`/keys/${id}/rotate`, {
       method: "POST",
+    }),
+
+  updateKey: (id: number, body: KeyPatch) =>
+    request<Key>(`/keys/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
     }),
 
   deleteKey: (id: number) => request<void>(`/keys/${id}`, { method: "DELETE" }),
