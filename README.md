@@ -8,6 +8,15 @@ A tiny proxy for safely exposing a self-hosted OpenAI-compatible LLM server to t
 
 One 11MB static binary, one SQLite file, nothing else.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/proxy-dark.png">
+  <img alt="The dashboard overview with token totals, cache hit rate, requests, errors, a chart of the last 24 hours and the busiest keys" src="docs/screenshots/proxy-light.png">
+</picture>
+
+More screenshots at [quecto.jgulfo.com/proxy](https://quecto.jgulfo.com/proxy/).
+
+## How a request moves through the proxy
+
 ```mermaid
 flowchart TD
   C["Client<br/>OpenAI SDK, Open WebUI, n8n"]
