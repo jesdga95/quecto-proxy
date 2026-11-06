@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -50,7 +51,6 @@ type Observer interface {
 }
 
 type Options struct {
-	HeaderTimeout    time.Duration
 	TrustForwardedIP bool
 }
 
@@ -95,7 +95,6 @@ func New(live *settings.Live, registry *keys.Registry, limiter *limit.Limiter, o
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
-		ResponseHeaderTimeout: opts.HeaderTimeout,
 		ForceAttemptHTTP2:     true,
 		// Responses are read as they stream, so never let the transport gzip them.
 		DisableCompression: true,
@@ -103,7 +102,7 @@ func New(live *settings.Live, registry *keys.Registry, limiter *limit.Limiter, o
 
 	p.rp = &httputil.ReverseProxy{
 		Rewrite:        p.rewrite,
-		Transport:      transport,
+		Transport:      &headerTimeout{base: transport, live: live},
 		ModifyResponse: p.modifyResponse,
 		FlushInterval:  -1,
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -137,7 +136,7 @@ func (p *Proxy) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := inspectBody(r, p.live.DefaultMaxTokens(), isUtilityPath(r.URL.Path))
+	info, err := inspectBody(r, p.live.DefaultMaxTokens(), isUtilityPath(r.URL.Path), p.live.MaxRequestBody())
 	if err != nil {
 		errBadRequestBody(err).write(w)
 		return
@@ -358,4 +357,39 @@ func joinUpstreamPath(base, incoming string) string {
 // swapper behind /llama/v1 is still reached at /llama/tokenize.
 func upstreamRoot(base string) string {
 	return strings.TrimSuffix(strings.TrimSuffix(base, "/"), "/v1")
+}
+
+// headerTimeout bounds the wait for response headers using the timeout saved
+// at the moment of each request, so a changed setting applies at once.
+type headerTimeout struct {
+	base http.RoundTripper
+	live *settings.Live
+}
+
+func (h *headerTimeout) RoundTrip(r *http.Request) (*http.Response, error) {
+	ctx, cancel := context.WithCancel(r.Context())
+	timer := time.AfterFunc(h.live.HeaderTimeout(), cancel)
+	resp, err := h.base.RoundTrip(r.WithContext(ctx))
+	if err != nil || !timer.Stop() {
+		timer.Stop()
+		cancel()
+		if err == nil {
+			resp.Body.Close()
+			err = context.DeadlineExceeded
+		}
+		return nil, err
+	}
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnClose) Close() error {
+	err := c.ReadCloser.Close()
+	c.cancel()
+	return err
 }

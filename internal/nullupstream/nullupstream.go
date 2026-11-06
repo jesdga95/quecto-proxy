@@ -18,6 +18,8 @@ type Options struct {
 	// Wait before the first chunk, then between each chunk.
 	TTFT       time.Duration
 	ChunkDelay time.Duration
+	// Wait before any response bytes, headers included.
+	HeaderDelay time.Duration
 
 	PromptTokens     int
 	CompletionTokens int
@@ -122,6 +124,9 @@ func (u *Upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	opts := u.options()
 
+	if opts.HeaderDelay > 0 {
+		time.Sleep(opts.HeaderDelay)
+	}
 	if opts.ForceStatus != 0 {
 		for k, v := range opts.ForceHeaders {
 			w.Header().Set(k, v)

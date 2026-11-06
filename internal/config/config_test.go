@@ -95,3 +95,45 @@ func TestPortsCollide(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxRequestBodyDefaultsTo256MiB(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.MaxRequestBody != 256<<20 {
+		t.Errorf("MaxRequestBody = %d, want %d", c.MaxRequestBody, 256<<20)
+	}
+}
+
+func TestMaxRequestBodyIsConfigurable(t *testing.T) {
+	c, err := load(t, map[string]string{"QUECTO_MAX_REQUEST_BODY_MIB": "64"})
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.MaxRequestBody != 64<<20 {
+		t.Errorf("MaxRequestBody = %d, want %d", c.MaxRequestBody, 64<<20)
+	}
+	if _, err := load(t, map[string]string{"QUECTO_MAX_REQUEST_BODY_MIB": "0"}); err == nil {
+		t.Error("a zero cap was accepted")
+	}
+}
+
+func TestSessionLifetimeDefaultsAndValidates(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if c.SessionLifetimeDays != 14 {
+		t.Errorf("SessionLifetimeDays = %d, want 14", c.SessionLifetimeDays)
+	}
+	c, err = load(t, map[string]string{"QUECTO_SESSION_LIFETIME_DAYS": "30"})
+	if err != nil || c.SessionLifetimeDays != 30 {
+		t.Fatalf("custom = %v, %v", c, err)
+	}
+	for _, bad := range []string{"0", "366"} {
+		if _, err := load(t, map[string]string{"QUECTO_SESSION_LIFETIME_DAYS": bad}); err == nil {
+			t.Errorf("%s was accepted", bad)
+		}
+	}
+}

@@ -20,6 +20,9 @@ const (
 	// so that what publishes it is a tunnel or a reverse proxy naming the port
 	// rather than anything Quecto decides on its own.
 	defaultAdminListen = ":11313"
+
+	// DefaultMaxRequestBodyMiB is the request body cap when none is set.
+	DefaultMaxRequestBodyMiB = 256
 )
 
 type Config struct {
@@ -43,8 +46,14 @@ type Config struct {
 	LogRetentionDays int
 	LogMaxRows       int64
 
-	DefaultMaxTokens  int
-	TrustProxyHeaders bool
+	DefaultMaxTokens int
+
+	// Largest request body the proxy will read, in bytes.
+	MaxRequestBody int64
+
+	// How long a dashboard login stays valid, in days.
+	SessionLifetimeDays int
+	TrustProxyHeaders   bool
 }
 
 func Load() (*Config, error) {
@@ -59,6 +68,8 @@ func Load() (*Config, error) {
 		LogRetentionDays:      envInt("QUECTO_LOG_RETENTION_DAYS", 30),
 		LogMaxRows:            int64(envInt("QUECTO_LOG_MAX_ROWS", 1_000_000)),
 		DefaultMaxTokens:      envInt("QUECTO_DEFAULT_MAX_TOKENS", 2048),
+		MaxRequestBody:        int64(envInt("QUECTO_MAX_REQUEST_BODY_MIB", DefaultMaxRequestBodyMiB)) << 20,
+		SessionLifetimeDays:   envInt("QUECTO_SESSION_LIFETIME_DAYS", 14),
 		TrustProxyHeaders:     envBool("QUECTO_TRUST_PROXY_HEADERS", false),
 	}
 
@@ -95,6 +106,12 @@ func Load() (*Config, error) {
 	}
 	if c.DefaultMaxTokens < 1 {
 		return nil, fmt.Errorf("QUECTO_DEFAULT_MAX_TOKENS must be positive, got %d", c.DefaultMaxTokens)
+	}
+	if c.MaxRequestBody < 1<<20 {
+		return nil, fmt.Errorf("QUECTO_MAX_REQUEST_BODY_MIB must be at least 1, got %d", c.MaxRequestBody>>20)
+	}
+	if c.SessionLifetimeDays < 1 || c.SessionLifetimeDays > 365 {
+		return nil, fmt.Errorf("QUECTO_SESSION_LIFETIME_DAYS must be between 1 and 365, got %d", c.SessionLifetimeDays)
 	}
 	return c, nil
 }

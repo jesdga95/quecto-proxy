@@ -216,7 +216,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "That password is not correct.")
 		return
 	}
-	s.setSessionCookie(w, r, s.session().issue(s.now()), sessionTTL)
+	s.setSessionCookie(w, r, s.session().issue(s.now(), s.live.SessionTTL()), s.live.SessionTTL())
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

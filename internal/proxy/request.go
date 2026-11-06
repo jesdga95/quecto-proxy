@@ -8,7 +8,12 @@ import (
 	"strconv"
 )
 
-const maxRequestBody = 32 << 20
+// bodyTooLargeError reports a request body over the configured cap.
+type bodyTooLargeError struct{ limit int64 }
+
+func (e *bodyTooLargeError) Error() string {
+	return fmt.Sprintf("request body is larger than %d bytes", e.limit)
+}
 
 // Usage is the token accounting an OpenAI-compatible server reports.
 type Usage struct {
@@ -91,11 +96,11 @@ func (i *requestInfo) estimate() int64 {
 
 // inspectBody reads the request body and reports what the proxy needs from it.
 // A body that is not JSON is passed through untouched.
-func inspectBody(r *http.Request, defaultMaxTokens int, utility bool) (*requestInfo, error) {
+func inspectBody(r *http.Request, defaultMaxTokens int, utility bool, maxBody int64) (*requestInfo, error) {
 	if r.Body == nil {
 		return &requestInfo{MaxTokens: defaultMaxTokens, Utility: utility}, nil
 	}
-	raw, err := readBody(r)
+	raw, err := readBody(r, maxBody)
 	if err != nil {
 		return nil, err
 	}
@@ -122,18 +127,18 @@ func inspectBody(r *http.Request, defaultMaxTokens int, utility bool) (*requestI
 
 // readBody sizes the buffer from Content-Length so a large prompt is not
 // copied through a series of growing slices.
-func readBody(r *http.Request) ([]byte, error) {
+func readBody(r *http.Request, maxBody int64) ([]byte, error) {
 	defer r.Body.Close()
 
 	var buf bytes.Buffer
-	if n := r.ContentLength; n > 0 && n <= maxRequestBody {
+	if n := r.ContentLength; n > 0 && n <= maxBody {
 		buf.Grow(int(n) + 1)
 	}
-	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxRequestBody+1)); err != nil {
+	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxBody+1)); err != nil {
 		return nil, fmt.Errorf("read request body: %w", err)
 	}
-	if buf.Len() > maxRequestBody {
-		return nil, fmt.Errorf("request body is larger than %d bytes", maxRequestBody)
+	if int64(buf.Len()) > maxBody {
+		return nil, &bodyTooLargeError{limit: maxBody}
 	}
 	return buf.Bytes(), nil
 }

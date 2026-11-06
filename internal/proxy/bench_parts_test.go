@@ -47,7 +47,7 @@ func BenchmarkPartReadBody(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		req, _ := http.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
-		if _, err := readBody(req); err != nil {
+		if _, err := readBody(req, 256<<20); err != nil {
 			b.Fatal(err)
 		}
 	}

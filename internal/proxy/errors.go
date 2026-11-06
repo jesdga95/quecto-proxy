@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -101,6 +102,15 @@ func errUpstreamUnreachable() *apiError {
 }
 
 func errBadRequestBody(err error) *apiError {
+	var big *bodyTooLargeError
+	if errors.As(err, &big) {
+		return &apiError{
+			Status:  http.StatusRequestEntityTooLarge,
+			Message: fmt.Sprintf("The request body is larger than %s. Send a smaller request, or raise QUECTO_MAX_REQUEST_BODY_MIB.", formatBytes(big.limit)),
+			Type:    "invalid_request_error",
+			Code:    "request_body_too_large",
+		}
+	}
 	return &apiError{
 		Status:  http.StatusBadRequest,
 		Message: "The request body could not be read.",
@@ -124,4 +134,12 @@ func errRateLimited(d limit.Decision) *apiError {
 		code = "quota_pending"
 	}
 	return &apiError{Status: http.StatusTooManyRequests, Message: msg, Type: "rate_limit_error", Code: code}
+}
+
+// formatBytes names a size in MiB when it is a whole number of them.
+func formatBytes(n int64) string {
+	if n >= 1<<20 && n%(1<<20) == 0 {
+		return fmt.Sprintf("%d MiB", n>>20)
+	}
+	return fmt.Sprintf("%d bytes", n)
 }

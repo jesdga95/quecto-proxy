@@ -48,6 +48,22 @@ import FormField from "../components/molecules/FormField.astro";
         >
           <input class="input num" id="s-maxtok" inputmode="numeric" />
         </FormField>
+
+        <FormField
+          label="Largest request (MiB)"
+          for="s-maxbody"
+          hint="Bigger request bodies are refused with HTTP 413."
+        >
+          <input class="input num" id="s-maxbody" inputmode="numeric" />
+        </FormField>
+
+        <FormField
+          label="Upstream timeout (seconds)"
+          for="s-timeout"
+          hint="How long to wait for the model server's first byte before giving up."
+        >
+          <input class="input num" id="s-timeout" inputmode="numeric" />
+        </FormField>
       </div>
     </div>
 
@@ -85,6 +101,14 @@ import FormField from "../components/molecules/FormField.astro";
           hint="At least 10 characters. Signs out every other session."
         >
           <input class="input" id="s-pw" type="password" autocomplete="new-password" />
+        </FormField>
+
+        <FormField
+          label="Session lifetime (days)"
+          for="s-session"
+          hint="How long a new dashboard login lasts. Existing logins keep their expiry."
+        >
+          <input class="input num" id="s-session" inputmode="numeric" />
         </FormField>
       </div>
     </div>
@@ -134,6 +158,9 @@ import FormField from "../components/molecules/FormField.astro";
     (el("s-key") as HTMLInputElement).value = s.upstream_api_key;
     (el("s-maxtok") as HTMLInputElement).value = String(s.default_max_tokens);
     (el("s-rows") as HTMLInputElement).value = String(s.log_max_rows);
+    (el("s-maxbody") as HTMLInputElement).value = String(s.max_request_body_mib);
+    (el("s-timeout") as HTMLInputElement).value = String(s.upstream_header_timeout_s);
+    (el("s-session") as HTMLInputElement).value = String(s.session_lifetime_days);
 
     const retention = el("s-retention") as HTMLSelectElement;
     if (![...retention.options].some((o) => o.value === String(s.log_retention_days))) {
@@ -163,11 +190,6 @@ import FormField from "../components/molecules/FormField.astro";
         "Database",
         "QUECTO_DB_PATH",
         `<span class="mono-chip break-all">${esc(s.db_path)}</span>`,
-      ),
-      healthRow(
-        "Response header timeout",
-        "How long to wait for the first byte from the model server",
-        `<span class="mono-chip">${esc(s.upstream_header_timeout)}</span>`,
       ),
       healthRow(
         "Trust forwarded headers",
@@ -235,6 +257,9 @@ import FormField from "../components/molecules/FormField.astro";
       default_max_tokens: numberValue("s-maxtok"),
       log_retention_days: Number((el("s-retention") as HTMLSelectElement).value),
       log_max_rows: numberValue("s-rows"),
+      max_request_body_mib: numberValue("s-maxbody"),
+      upstream_header_timeout_s: numberValue("s-timeout"),
+      session_lifetime_days: numberValue("s-session"),
     };
 
     const credential = (el("s-key") as HTMLInputElement).value;

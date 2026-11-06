@@ -25,7 +25,7 @@ func newTestWriter(t *testing.T, retentionDays int, maxRows int64) (*Writer, *st
 
 	u, _ := url.Parse("http://127.0.0.1:9/v1")
 	live, err := settings.Load(&config.Config{
-		UpstreamURL: u, DefaultMaxTokens: 2048,
+		UpstreamURL: u, DefaultMaxTokens: 2048, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14,
 		LogRetentionDays: retentionDays, LogMaxRows: maxRows,
 	}, st)
 	if err != nil {

@@ -91,6 +91,8 @@ Quecto is built for one specific case: one self-hosted model server, exposed pub
 | `QUECTO_LOG_RETENTION_DAYS` | `30` | Hourly totals outlive raw rows, so charts stay long range |
 | `QUECTO_LOG_MAX_ROWS` | `1000000` | Cap on raw log rows, whichever of this and retention hits first |
 | `QUECTO_DEFAULT_MAX_TOKENS` | `2048` | Reserved against token limits when a request names no `max_tokens` |
+| `QUECTO_MAX_REQUEST_BODY_MIB` | `256` | Largest request body in MiB. Bigger ones get HTTP 413 |
+| `QUECTO_SESSION_LIFETIME_DAYS` | `14` | How long a dashboard login lasts, 1 to 365. Applies to new logins |
 | `QUECTO_UPSTREAM_HEADER_TIMEOUT` | `120s` | How long to wait for the upstream to start replying |
 | `QUECTO_TRUST_PROXY_HEADERS` | `false` | Believe `X-Forwarded-Proto` and `X-Forwarded-For`. Only behind a proxy you control |
 | `QUECTO_SESSION_SECRET` | generated | Signs dashboard sessions. Left unset, one is generated and kept in the database |

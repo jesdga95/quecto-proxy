@@ -49,9 +49,8 @@ func newHarness(t *testing.T) *harness {
 	u, _ := url.Parse("http://127.0.0.1:9/v1")
 	cfg := &config.Config{
 		Listen: ":0", UpstreamURL: u, DBPath: "test.db",
-		AdminPassword: testPassword, DefaultMaxTokens: 2048,
+		AdminPassword: testPassword, DefaultMaxTokens: 2048, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14,
 		LogRetentionDays: 30, LogMaxRows: 1_000_000,
-		UpstreamHeaderTimeout: 120 * time.Second,
 	}
 	live, err := settings.Load(cfg, st)
 	if err != nil {
@@ -736,7 +735,7 @@ func TestSettingsHideUpstreamCredential(t *testing.T) {
 	// Sending the mask back must not overwrite the stored credential.
 	h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_api_key": "********"}, c)
 	live, _ := settings.Load(&config.Config{
-		UpstreamURL: mustURL("http://127.0.0.1:9/v1"), DefaultMaxTokens: 1,
+		UpstreamURL: mustURL("http://127.0.0.1:9/v1"), DefaultMaxTokens: 1, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14,
 		LogRetentionDays: 1, LogMaxRows: 1000,
 	}, h.st)
 	if got := live.UpstreamAPIKey(); got != "sk-secret-value" {
@@ -851,5 +850,59 @@ func TestAMissIsAnsweredInJson(t *testing.T) {
 		if body.Error == "" {
 			t.Errorf("%s %s carries no message", c.method, c.path)
 		}
+	}
+}
+
+func TestSettingsMaxRequestBody(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"max_request_body_mib": 512}, c)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"max_request_body_mib":512`)) {
+		t.Fatalf("patch = %d, body %s", rec.Code, rec.Body)
+	}
+	live, _ := settings.Load(&config.Config{
+		UpstreamURL: mustURL("http://127.0.0.1:9/v1"), DefaultMaxTokens: 1, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14,
+		LogRetentionDays: 1, LogMaxRows: 1000,
+	}, h.st)
+	if got := live.MaxRequestBody(); got != 512<<20 {
+		t.Fatalf("live limit = %d, want %d", got, 512<<20)
+	}
+	if rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"max_request_body_mib": 0}, c); rec.Code != http.StatusBadRequest {
+		t.Fatalf("zero limit = %d, want 400", rec.Code)
+	}
+}
+
+func TestSettingsUpstreamTimeout(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_header_timeout_s": 45}, c)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"upstream_header_timeout_s":45`)) {
+		t.Fatalf("patch = %d, body %s", rec.Code, rec.Body)
+	}
+	if rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"upstream_header_timeout_s": 0}, c); rec.Code != http.StatusBadRequest {
+		t.Fatalf("zero timeout = %d, want 400", rec.Code)
+	}
+}
+
+func TestSessionLifetimeFollowsTheSavedSetting(t *testing.T) {
+	h := newHarness(t)
+	c := h.login()
+
+	rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"session_lifetime_days": 3}, c)
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"session_lifetime_days":3`)) {
+		t.Fatalf("patch = %d, body %s", rec.Code, rec.Body)
+	}
+	for _, bad := range []int{0, 366} {
+		if rec := h.do("PATCH", "/quecto/api/settings", map[string]any{"session_lifetime_days": bad}, c); rec.Code != http.StatusBadRequest {
+			t.Errorf("%d days = %d, want 400", bad, rec.Code)
+		}
+	}
+
+	// A login after the change lasts the saved time.
+	login := h.login()
+	if got := login.MaxAge; got != 3*24*60*60 {
+		t.Fatalf("cookie MaxAge = %d, want %d", got, 3*24*60*60)
 	}
 }

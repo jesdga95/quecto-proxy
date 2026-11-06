@@ -48,9 +48,8 @@ func newRig(t testing.TB, opts nullupstream.Options) *rig {
 
 	u, _ := url.Parse(upSrv.URL + "/v1")
 	cfg := &config.Config{
-		UpstreamURL: u, DefaultMaxTokens: 2048,
+		UpstreamURL: u, DefaultMaxTokens: 2048, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14,
 		LogRetentionDays: 30, LogMaxRows: 1_000_000,
-		UpstreamHeaderTimeout: 30 * time.Second,
 	}
 	live, err := settings.Load(cfg, st)
 	if err != nil {
@@ -72,7 +71,7 @@ func newRig(t testing.TB, opts nullupstream.Options) *rig {
 	}
 
 	lim := limit.New()
-	p := New(live, reg, lim, Options{HeaderTimeout: 30 * time.Second},
+	p := New(live, reg, lim, Options{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	front := httptest.NewServer(p.Handler())
@@ -276,7 +275,7 @@ func TestUpstreamCredentialIsInjected(t *testing.T) {
 	r := newRig(t, nullupstream.DefaultOptions())
 
 	live, _ := settings.Load(&config.Config{
-		UpstreamURL: mustURL(r.front.URL), DefaultMaxTokens: 1, LogRetentionDays: 1, LogMaxRows: 1000,
+		UpstreamURL: mustURL(r.front.URL), DefaultMaxTokens: 1, MaxRequestBody: 256 << 20, UpstreamHeaderTimeout: 30 * time.Second, SessionLifetimeDays: 14, LogRetentionDays: 1, LogMaxRows: 1000,
 	}, r.st)
 	if err := live.Apply(settings.Patch{UpstreamAPIKey: strPtr("sk-upstream")}); err != nil {
 		t.Fatalf("set upstream key: %v", err)
@@ -474,4 +473,100 @@ func mustURL(s string) *url.URL {
 		panic(err)
 	}
 	return u
+}
+
+func TestOversizedBodyIs413NamingTheLimit(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	if err := r.proxy.live.Apply(settings.Patch{MaxRequestBodyMiB: ptr(int64(2))}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	big := `{"model":"m","messages":[{"role":"user","content":"` + strings.Repeat("x", 2<<20) + `"}]}`
+	resp := r.post("/v1/chat/completions", big, r.secret)
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413: %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"larger than 2 MiB", `"code":"request_body_too_large"`} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Fatalf("response missing %s: %s", want, body)
+		}
+	}
+
+	// A saved change applies to the next request without a restart.
+	if err := r.proxy.live.Apply(settings.Patch{MaxRequestBodyMiB: ptr(int64(4))}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	ok := r.post("/v1/chat/completions", big, r.secret)
+	defer ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("status after raising the limit = %d, want 200", ok.StatusCode)
+	}
+}
+
+func TestDefaultBodyCapIs256MiB(t *testing.T) {
+	r := newRig(t, nullupstream.DefaultOptions())
+	if got := r.proxy.live.MaxRequestBody(); got != 256<<20 {
+		t.Fatalf("MaxRequestBody = %d, want %d", got, 256<<20)
+	}
+}
+
+func TestUnreadableBodyStays400(t *testing.T) {
+	if got := errBadRequestBody(io.ErrUnexpectedEOF).Status; got != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", got)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
+func TestUpstreamTimeoutFollowsTheSavedSetting(t *testing.T) {
+	o := nullupstream.DefaultOptions()
+	o.HeaderDelay = 1500 * time.Millisecond
+	r := newRig(t, o)
+	body := `{"model":"m","messages":[]}`
+
+	if got := r.proxy.live.HeaderTimeout(); got != 30*time.Second {
+		t.Fatalf("default timeout = %v, want 30s", got)
+	}
+	if err := r.proxy.live.Apply(settings.Patch{HeaderTimeoutS: ptr(int64(1))}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	slow := r.post("/v1/chat/completions", body, r.secret)
+	defer slow.Body.Close()
+	b, _ := io.ReadAll(slow.Body)
+	if slow.StatusCode != http.StatusBadGateway || !bytes.Contains(b, []byte("upstream_unavailable")) {
+		t.Fatalf("slow upstream = %d %s, want 502 upstream_unavailable", slow.StatusCode, b)
+	}
+
+	// Raising the saved value applies to the next request without a restart.
+	if err := r.proxy.live.Apply(settings.Patch{HeaderTimeoutS: ptr(int64(5))}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	ok := r.post("/v1/chat/completions", body, r.secret)
+	defer ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("status with the longer timeout = %d, want 200", ok.StatusCode)
+	}
+
+	if err := r.proxy.live.Apply(settings.Patch{HeaderTimeoutS: ptr(int64(0))}); err == nil {
+		t.Fatal("a zero timeout was accepted")
+	}
+}
+
+// The timeout covers the wait for headers only; a reply that streams for
+// longer than it must not be cut.
+func TestUpstreamTimeoutDoesNotCutAStream(t *testing.T) {
+	o := nullupstream.DefaultOptions()
+	o.TTFT, o.ChunkDelay = 700*time.Millisecond, 400*time.Millisecond
+	r := newRig(t, o)
+	if err := r.proxy.live.Apply(settings.Patch{HeaderTimeoutS: ptr(int64(1))}); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	resp := r.post("/v1/chat/completions", `{"model":"m","stream":true,"messages":[]}`, r.secret)
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || !bytes.Contains(b, []byte("[DONE]")) {
+		t.Fatalf("stream = %d, want 200 ending in [DONE]: %s", resp.StatusCode, b)
+	}
 }

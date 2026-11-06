@@ -110,10 +110,12 @@ export interface Settings {
   default_max_tokens: number;
   log_retention_days: number;
   log_max_rows: number;
+  max_request_body_mib: number;
+  upstream_header_timeout_s: number;
+  session_lifetime_days: number;
   listen: string;
   admin_listen: string;
   db_path: string;
-  upstream_header_timeout: string;
   trust_proxy_headers: boolean;
 }
 

@@ -12,11 +12,10 @@ type settingsResponse struct {
 	settings.Values
 
 	// Changing these needs a restart, so the dashboard shows them read only.
-	Listen                string `json:"listen"`
-	AdminListen           string `json:"admin_listen"`
-	DBPath                string `json:"db_path"`
-	UpstreamHeaderTimeout string `json:"upstream_header_timeout"`
-	TrustProxyHeaders     bool   `json:"trust_proxy_headers"`
+	Listen            string `json:"listen"`
+	AdminListen       string `json:"admin_listen"`
+	DBPath            string `json:"db_path"`
+	TrustProxyHeaders bool   `json:"trust_proxy_headers"`
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
@@ -26,12 +25,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		v.UpstreamAPIKey = "********"
 	}
 	writeJSON(w, http.StatusOK, settingsResponse{
-		Values:                v,
-		Listen:                s.cfg.Listen,
-		AdminListen:           s.cfg.AdminListen,
-		DBPath:                s.cfg.DBPath,
-		UpstreamHeaderTimeout: s.cfg.UpstreamHeaderTimeout.String(),
-		TrustProxyHeaders:     s.cfg.TrustProxyHeaders,
+		Values:            v,
+		Listen:            s.cfg.Listen,
+		AdminListen:       s.cfg.AdminListen,
+		DBPath:            s.cfg.DBPath,
+		TrustProxyHeaders: s.cfg.TrustProxyHeaders,
 	})
 }
 
@@ -73,7 +71,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		s.rotatePassword(hash)
 		// The old cookie no longer verifies, so hand this browser a fresh one.
-		s.setSessionCookie(w, r, s.session().issue(s.now()), sessionTTL)
+		s.setSessionCookie(w, r, s.session().issue(s.now(), s.live.SessionTTL()), s.live.SessionTTL())
 	}
 
 	s.handleGetSettings(w, r)

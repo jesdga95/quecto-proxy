@@ -19,7 +19,6 @@ const (
 	settingPasswordHash = "admin_password_hash"
 	settingSessionKey   = "session_secret"
 	sessionCookie       = "quecto_session"
-	sessionTTL          = 14 * 24 * time.Hour
 
 	// minPasswordLen is the floor for the admin password, enforced both when it
 	// is seeded from the environment and when it is changed from the dashboard.
@@ -83,8 +82,8 @@ func newSessions(secret, passwordHash string) *sessions {
 	return &sessions{key: mac.Sum(nil)}
 }
 
-func (s *sessions) issue(now time.Time) string {
-	exp := strconv.FormatInt(now.Add(sessionTTL).Unix(), 10)
+func (s *sessions) issue(now time.Time, ttl time.Duration) string {
+	exp := strconv.FormatInt(now.Add(ttl).Unix(), 10)
 	return exp + "." + s.sign(exp)
 }
 

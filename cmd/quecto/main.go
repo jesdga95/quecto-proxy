@@ -65,7 +65,6 @@ func run(log *slog.Logger) error {
 
 	gate := metrics.NewHistogram()
 	px := proxy.New(live, registry, limiter, proxy.Options{
-		HeaderTimeout:    cfg.UpstreamHeaderTimeout,
 		TrustForwardedIP: cfg.TrustProxyHeaders,
 	}, log)
 	px.SetObserver(gate)
