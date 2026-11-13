@@ -7,9 +7,11 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"quecto/internal/keys"
@@ -360,7 +362,9 @@ func upstreamRoot(base string) string {
 }
 
 // headerTimeout bounds the wait for response headers using the timeout saved
-// at the moment of each request, so a changed setting applies at once.
+// at the moment of each request, so a changed setting applies at once. The
+// clock starts once the request body is fully written, so a large upload does
+// not eat into the time the model server has to answer.
 type headerTimeout struct {
 	base http.RoundTripper
 	live *settings.Live
@@ -368,10 +372,13 @@ type headerTimeout struct {
 
 func (h *headerTimeout) RoundTrip(r *http.Request) (*http.Response, error) {
 	ctx, cancel := context.WithCancel(r.Context())
-	timer := time.AfterFunc(h.live.HeaderTimeout(), cancel)
+	w := &headerWait{d: h.live.HeaderTimeout(), cancel: cancel}
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(httptrace.WroteRequestInfo) { w.start() },
+	})
+
 	resp, err := h.base.RoundTrip(r.WithContext(ctx))
-	if err != nil || !timer.Stop() {
-		timer.Stop()
+	if fired := w.stop(); err != nil || fired {
 		cancel()
 		if err == nil {
 			resp.Body.Close()
@@ -381,6 +388,44 @@ func (h *headerTimeout) RoundTrip(r *http.Request) (*http.Response, error) {
 	}
 	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
 	return resp, nil
+}
+
+// headerWait is the response header deadline for one round trip.
+type headerWait struct {
+	d      time.Duration
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	timer   *time.Timer
+	stopped bool
+	fired   bool
+}
+
+func (w *headerWait) start() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped || w.timer != nil {
+		return
+	}
+	w.timer = time.AfterFunc(w.d, func() {
+		w.mu.Lock()
+		w.fired = !w.stopped
+		w.mu.Unlock()
+		if w.fired {
+			w.cancel()
+		}
+	})
+}
+
+// stop ends the wait and reports whether the deadline had already passed.
+func (w *headerWait) stop() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.stopped = true
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	return w.fired
 }
 
 type cancelOnClose struct {

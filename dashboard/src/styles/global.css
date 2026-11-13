@@ -260,6 +260,23 @@
     border-color: transparent;
   }
 
+  /* A unit shown inside the field, so the label stays a plain name. */
+  .suffixed {
+    position: relative;
+  }
+  .suffixed .input {
+    padding-right: 48px;
+  }
+  .suffixed span {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 12px;
+    color: var(--muted);
+    pointer-events: none;
+  }
+
   .pill {
     display: inline-flex;
     align-items: center;

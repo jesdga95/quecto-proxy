@@ -8,6 +8,10 @@ import (
 	"strconv"
 )
 
+// attachmentTokens is what each inline base64 attachment holds against the
+// token limits in place of its bytes. The real count bills after the reply.
+const attachmentTokens = 1024
+
 // bodyTooLargeError reports a request body over the configured cap.
 type bodyTooLargeError struct{ limit int64 }
 
@@ -77,12 +81,19 @@ type requestInfo struct {
 	injectComma bool
 
 	Body []byte
+
+	// Bytes of the body inside base64 data: URIs, and how many there were.
+	attachmentBytes int
+	attachments     int
 }
 
 // estimate is what the call is held against until the real cost is known: the
 // reply cannot pass max_tokens, and the prompt is read off the body at a
 // deliberately tight three bytes a token. Charging only max_tokens would leave
 // every prompt out of the hold, which is most of the cost of a short reply.
+//
+// An inline image, document or video is base64 that a model never reads as
+// text, so its bytes are left out and each one holds a flat attachmentTokens.
 //
 // A utility route holds nothing. It generates no tokens, so any hold would be
 // room taken from a quota the call is never going to spend, and a long enough
@@ -91,7 +102,8 @@ func (i *requestInfo) estimate() int64 {
 	if i.Utility {
 		return 0
 	}
-	return int64(len(i.Body)/3 + i.MaxTokens)
+	text := len(i.Body) - i.attachmentBytes
+	return int64(text/3 + i.attachments*attachmentTokens + i.MaxTokens)
 }
 
 // inspectBody reads the request body and reports what the proxy needs from it.
@@ -113,6 +125,7 @@ func inspectBody(r *http.Request, defaultMaxTokens int, utility bool, maxBody in
 		return info, nil
 	}
 
+	info.attachments, info.attachmentBytes = dataURIs(raw)
 	info.Model = p.Model
 	info.Stream = p.Stream
 	info.ClientWantsUsage = p.HasStreamOptions && p.IncludeUsage
@@ -126,12 +139,16 @@ func inspectBody(r *http.Request, defaultMaxTokens int, utility bool, maxBody in
 }
 
 // readBody sizes the buffer from Content-Length so a large prompt is not
-// copied through a series of growing slices.
+// copied through a series of growing slices. A declared length over the cap
+// is refused before any of the body is read.
 func readBody(r *http.Request, maxBody int64) ([]byte, error) {
 	defer r.Body.Close()
 
+	if r.ContentLength > maxBody {
+		return nil, &bodyTooLargeError{limit: maxBody}
+	}
 	var buf bytes.Buffer
-	if n := r.ContentLength; n > 0 && n <= maxBody {
+	if n := r.ContentLength; n > 0 {
 		buf.Grow(int(n) + 1)
 	}
 	if _, err := buf.ReadFrom(io.LimitReader(r.Body, maxBody+1)); err != nil {
@@ -141,6 +158,36 @@ func readBody(r *http.Request, maxBody int64) ([]byte, error) {
 		return nil, &bodyTooLargeError{limit: maxBody}
 	}
 	return buf.Bytes(), nil
+}
+
+var (
+	dataURIPrefix = []byte("data:")
+	base64Marker  = []byte(";base64,")
+)
+
+// dataURIs counts the base64 data: URIs among the body's strings and the bytes
+// they hold. Only base64 counts, so prose that happens to open with "data:"
+// stays in the estimate. It jumps quote to quote, as the scanner does.
+func dataURIs(body []byte) (count, size int) {
+	s := scanner{b: body}
+	for {
+		j := bytes.IndexByte(s.b[s.i:], '"')
+		if j < 0 {
+			return count, size
+		}
+		s.i += j
+		str, ok := s.str()
+		if !ok {
+			return count, size
+		}
+		if !bytes.HasPrefix(str, dataURIPrefix) {
+			continue
+		}
+		if bytes.Contains(str[:min(len(str), 256)], base64Marker) {
+			count++
+			size += len(str)
+		}
+	}
 }
 
 var (

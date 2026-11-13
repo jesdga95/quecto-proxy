@@ -87,6 +87,8 @@ func run(log *slog.Logger) error {
 	}
 	public, adminMux := routes(cfg, adminSrv.Handler(), dashboard, px.Handler())
 
+	// No ReadTimeout: it would cap how long a body up to the request size
+	// limit may take to upload. Only the headers have a deadline.
 	servers := []*http.Server{{
 		Addr:              cfg.Listen,
 		Handler:           public,

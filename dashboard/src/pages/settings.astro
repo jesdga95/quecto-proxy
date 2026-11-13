@@ -50,19 +50,25 @@ import FormField from "../components/molecules/FormField.astro";
         </FormField>
 
         <FormField
-          label="Largest request (MiB)"
+          label="Largest request"
           for="s-maxbody"
           hint="Bigger request bodies are refused with HTTP 413."
         >
-          <input class="input num" id="s-maxbody" inputmode="numeric" />
+          <div class="suffixed">
+            <input class="input num" id="s-maxbody" inputmode="numeric" />
+            <span>MiB</span>
+          </div>
         </FormField>
 
         <FormField
-          label="Upstream timeout (seconds)"
+          label="Upstream timeout"
           for="s-timeout"
           hint="How long to wait for the model server's first byte before giving up."
         >
-          <input class="input num" id="s-timeout" inputmode="numeric" />
+          <div class="suffixed">
+            <input class="input num" id="s-timeout" inputmode="numeric" />
+            <span>sec</span>
+          </div>
         </FormField>
       </div>
     </div>
@@ -104,11 +110,14 @@ import FormField from "../components/molecules/FormField.astro";
         </FormField>
 
         <FormField
-          label="Session lifetime (days)"
+          label="Session lifetime"
           for="s-session"
           hint="How long a new dashboard login lasts. Existing logins keep their expiry."
         >
-          <input class="input num" id="s-session" inputmode="numeric" />
+          <div class="suffixed">
+            <input class="input num" id="s-session" inputmode="numeric" />
+            <span>days</span>
+          </div>
         </FormField>
       </div>
     </div>
